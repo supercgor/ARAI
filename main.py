@@ -10,7 +10,7 @@ def run():
     options, args = parser.parse_args()
     
     # debug
-    #options.mode = 'train'
+    options.mode = 'train'
 
     cfg = get_config(options)
 

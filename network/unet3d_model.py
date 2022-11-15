@@ -50,6 +50,7 @@ class UNet3D(nn.Module):
     def load_pretrained_layer(self, pre_dict_path):
         state_dict = self.state_dict()
         param_names = list(state_dict.keys())
+        print(pre_dict_path)
         pretrained_state_dict = torch.load(pre_dict_path)
         pretrained_param_names = list(pretrained_state_dict.keys())
         match_list = []

@@ -1,0 +1,73 @@
+[11/15/2022 15:08:22 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:08:22 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/15/2022 15:08:22 - main -     INFO]: Start training.
+[11/15/2022 15:09:16 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:09:16 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/15/2022 15:09:16 - main -     INFO]: Start training.
+[11/15/2022 15:11:47 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:11:47 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/15/2022 15:11:47 - main -     INFO]: Start training.
+[11/15/2022 15:13:22 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:13:22 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/15/2022 15:13:22 - main -     INFO]: Start training.
+[11/15/2022 15:15:41 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:15:41 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/15/2022 15:15:41 - main -     INFO]: Start training.
+[11/15/2022 15:17:51 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:17:51 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/15/2022 15:17:51 - main -     INFO]: Start training.
+[11/15/2022 15:19:56 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:20:11 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:20:11 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/15/2022 15:20:11 - main -     INFO]: Start training.
+[11/15/2022 15:21:10 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/15/2022 15:21:10 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/15/2022 15:21:10 - main -     INFO]: Start training.
+[11/15/2022 15:30:44 - main -     INFO]: 
+Epoch = 1
+Max memory use=2680.48MB
+Train info: loss = 0.107418537139893
+O(0.0-3.0A): ACC = 0.92313772 SUC = 0.20700002 TP =    47863 FP =     2376 FN =     2282
+H(0.0-3.0A): ACC = 0.76988244 SUC = 0.00000000 TP =    88892 FP =    19514 FN =    11398
+Valid info: loss = 0.081609122455120
+O(0.0-3.0A): ACC = 0.96020520 SUC = 0.32812500 TP =    15577 FP =      284 FN =      396
+H(0.0-3.0A): ACC = 0.85399121 SUC = 0.00000000 TP =    29955 FP =     3414 FN =     1991
+[11/15/2022 15:30:44 - main -     INFO]: Saved a new model: CP01_O0.9602_H0.8540_0.081609.pkl
+[11/15/2022 15:30:44 - main -     INFO]: Spend time: 574.20s
+[11/15/2022 15:30:44 - main -     INFO]: End training epoch: 1
+[11/15/2022 15:40:43 - main -     INFO]: 
+Epoch = 2
+Max memory use=2682.07MB
+Train info: loss = 0.102298766374588
+O(0.0-3.0A): ACC = 0.96341449 SUC = 0.32700002 TP =    49205 FP =     1018 FN =      940
+H(0.0-3.0A): ACC = 0.87325418 SUC = 0.00000000 TP =    93845 FP =     7780 FN =     6445
+Valid info: loss = 0.098835371434689
+O(0.0-3.0A): ACC = 0.96575928 SUC = 0.42187500 TP =    15627 FP =      237 FN =      346
+H(0.0-3.0A): ACC = 0.88785708 SUC = 0.00312500 TP =    29890 FP =     1900 FN =     2056
+[11/15/2022 15:40:43 - main -     INFO]: Saved a new model: CP02_O0.9658_H0.8879_0.098835.pkl
+[11/15/2022 15:40:43 - main -     INFO]: Spend time: 599.22s
+[11/15/2022 15:40:43 - main -     INFO]: End training epoch: 2
+[11/15/2022 15:50:42 - main -     INFO]: 
+Epoch = 3
+Max memory use=2683.30MB
+Train info: loss = 0.094147630035877
+O(0.0-3.0A): ACC = 0.96961212 SUC = 0.35600001 TP =    49412 FP =      880 FN =      733
+H(0.0-3.0A): ACC = 0.89425868 SUC = 0.00400000 TP =    95308 FP =     6781 FN =     4982
+Valid info: loss = 0.101837299764156
+O(0.0-3.0A): ACC = 0.97030944 SUC = 0.36562499 TP =    15738 FP =      268 FN =      235
+H(0.0-3.0A): ACC = 0.88545841 SUC = 0.00312500 TP =    29859 FP =     1932 FN =     2087
+[11/15/2022 15:50:42 - main -     INFO]: No model was saved
+[11/15/2022 15:50:42 - main -     INFO]: Spend time: 598.41s
+[11/15/2022 15:50:42 - main -     INFO]: End training epoch: 3
+[11/15/2022 16:00:39 - main -     INFO]: 
+Epoch = 4
+Max memory use=2683.30MB
+Train info: loss = 0.088940985500813
+O(0.0-3.0A): ACC = 0.97273481 SUC = 0.42700002 TP =    49482 FP =      798 FN =      663
+H(0.0-3.0A): ACC = 0.90521830 SUC = 0.00600000 TP =    95824 FP =     6043 FN =     4466
+Valid info: loss = 0.094276443123817
+O(0.0-3.0A): ACC = 0.96798718 SUC = 0.38437501 TP =    15640 FP =      215 FN =      333
+H(0.0-3.0A): ACC = 0.89642602 SUC = 0.00937500 TP =    30198 FP =     1931 FN =     1748
+[11/15/2022 16:00:39 - main -     INFO]: Saved a new model: CP04_O0.9680_H0.8964_0.094276.pkl
+[11/15/2022 16:00:39 - main -     INFO]: Spend time: 597.59s
+[11/15/2022 16:00:39 - main -     INFO]: End training epoch: 4

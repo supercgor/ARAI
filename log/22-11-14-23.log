@@ -1,0 +1,30 @@
+[11/14/2022 23:43:04 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/14/2022 23:43:04 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/14/2022 23:43:04 - main -     INFO]: Start prediction.
+[11/14/2022 23:43:28 - main -     INFO]: Spend time: 24.07s
+[11/14/2022 23:43:28 - main -     INFO]: End prediction
+[11/14/2022 23:44:07 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP43_O0.9824_H0.9343_0.074350.pkl
+[11/14/2022 23:44:07 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/14/2022 23:44:07 - main -     INFO]: Start prediction.
+[11/14/2022 23:44:30 - main -     INFO]: Spend time: 23.30s
+[11/14/2022 23:44:30 - main -     INFO]: End prediction
+[11/14/2022 23:44:46 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/O0.9812_H0.9232_0.0582_CP48.pkl
+[11/14/2022 23:44:46 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/14/2022 23:44:46 - main -     INFO]: Start prediction.
+[11/14/2022 23:45:10 - main -     INFO]: Spend time: 23.33s
+[11/14/2022 23:45:10 - main -     INFO]: End prediction
+[11/14/2022 23:49:28 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/O0.9812_H0.9232_0.0582_CP48.pkl
+[11/14/2022 23:49:28 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/14/2022 23:49:28 - main -     INFO]: Start prediction.
+[11/14/2022 23:49:53 - main -     INFO]: Spend time: 25.18s
+[11/14/2022 23:49:53 - main -     INFO]: End prediction
+[11/14/2022 23:52:53 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP43_O0.9824_H0.9343_0.074350.pkl
+[11/14/2022 23:52:53 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/14/2022 23:52:53 - main -     INFO]: Start prediction.
+[11/14/2022 23:53:16 - main -     INFO]: Spend time: 23.30s
+[11/14/2022 23:53:16 - main -     INFO]: End prediction
+[11/14/2022 23:53:29 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+[11/14/2022 23:53:29 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
+[11/14/2022 23:53:29 - main -     INFO]: Start prediction.
+[11/14/2022 23:53:52 - main -     INFO]: Spend time: 23.25s
+[11/14/2022 23:53:52 - main -     INFO]: End prediction

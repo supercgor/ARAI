@@ -33,13 +33,11 @@ _C.DATA.VAL_PATH = _root_path
 # Test data path
 _C.DATA.TEST_PATH = _root_path
 # Train file list
-_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path, 'train_FileList_L')
+_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path, 'train_FileList')
 # Val file list
-_C.DATA.VAL_FILE_LIST = os.path.join(_root_path, 'val_FileList_L')
+_C.DATA.VAL_FILE_LIST = os.path.join(_root_path, 'val_FileList')
 # Test file list
 _C.DATA.TEST_FILE_LIST = os.path.join(_root_path, 'test_FileList')
-# info path used when testing
-_C.DATA.POSCAR_INFO = r"/gpfs/share/home/1900011362/data/afm_ml_ice/label/T160_0.poscar"
 # Label path
 _C.DATA.LABEL_PATH = os.path.join(_root_path, 'label')
 
@@ -80,7 +78,7 @@ _C.TRAIN.CRITERION.WEIGHT_OFFSET_Z = 0.5
 # Reduction of offset
 _C.TRAIN.CRITERION.REDUCTION = 'mean'
 # Enable local loss after epoch
-_C.TRAIN.CRITERION.LOCAL = 0
+_C.TRAIN.CRITERION.LOCAL = 2
 # Decay para
 _C.TRAIN.CRITERION.DECAY = [0.9,0.7,0.5,0.3,0.1,0.05]
 

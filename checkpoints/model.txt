@@ -1,4 +1,6 @@
 # No local loss
 afm_go/checkpoints/CP49_O0.9790_H0.9080_0.001900.pkl
-# with O-H O-O local loss
+# with H-H O-O local loss
 afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
+# with O-H and H-O local loss many epochs
+afm_go/checkpoints/CP43_O0.9824_H0.9343_0.074350.pkl
