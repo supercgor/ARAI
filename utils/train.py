@@ -208,6 +208,9 @@ class Trainer():
         criterion = self.criterion
         cfg = self.cfg
         test_loader = make_dataset('test')
+        save_dir = os.path.join(cfg.DATA.TEST_PATH, cfg.PRED.SAVE_DIR)
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
         
         # -------------------------------------------
 
@@ -221,7 +224,7 @@ class Trainer():
         
         # -------------------------------------------
         
-        for i, (inputs, targets, _, _) in enumerate(test_loader):
+        for i, (inputs, targets, filenames, _) in enumerate(test_loader):
             
             if cfg.TRAIN.SHOW:
                 t = time.time()
@@ -242,6 +245,8 @@ class Trainer():
 
             log_dic['count'].append(analyzer.count(info))
             log_dic['loss'].append(loss)
+                        
+            analyzer.to_poscar(predictions, filenames, save_dir)
 
             if cfg.TRAIN.SHOW:
                 print(
@@ -262,6 +267,9 @@ class Trainer():
                 
         logger.test_info(log_dic)
         
+        # -------------------------------------------
+        analyzer.rdf.save()
+        
         logger.info(f"Spend time: {time.time() - start_time:.2f}s")
         
         logger.info(f'End testing')
@@ -273,6 +281,7 @@ class Trainer():
         logger = self.logger
         model = self.model
         cfg = self.cfg
+        rdf = RDF(cfg)
         analyzer = self.analyzer
         predict_loader = make_dataset('predict', cfg)
 
@@ -299,11 +308,13 @@ class Trainer():
             save_dir = os.path.join(cfg.PRED.PATH, cfg.PRED.SAVE_DIR)
             
             analyzer.to_poscar(predictions, filenames, save_dir)
-
+            
             if cfg.TRAIN.SHOW:
                 print(f' time: {(time.time() - t):.2f}', end='')
         
         # -------------------------------------------
+  
+        analyzer.rdf.save()
   
         logger.info(f"Spend time: {time.time() - start_time:.2f}s")
         
