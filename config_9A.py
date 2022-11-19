@@ -33,9 +33,9 @@ _C.DATA.VAL_PATH = _root_path
 # Test data path
 _C.DATA.TEST_PATH = _root_path
 # Train file list
-_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'train_L.filelist')
+_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'train.filelist')
 # Val file list
-_C.DATA.VAL_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'valid_L.filelist')
+_C.DATA.VAL_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'valid.filelist')
 # Test file list
 _C.DATA.TEST_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'test_L.filelist')
 # Label path
