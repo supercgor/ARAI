@@ -12,7 +12,7 @@ class Analyzer(torch.nn.Module):
         # some initialization
         self.elem = cfg.DATA.ELE_NAME
         self.elem_num = len(self.elem)
-        self.ele_diameter = [0.740, 0.528]
+        self.ele_diameter = [0.740 * 1.4, 0.528 * 1.4]
 
         self.space_size = [cfg.MODEL.CHANNELS, cfg.MODEL.CHANNELS, cfg.DATA.Z]
         self.output_shape = self.space_size + [self.elem_num, 4]
@@ -34,6 +34,7 @@ class Analyzer(torch.nn.Module):
         # Used to Caculate the absulute position of offset, this tensor fulfilled that t[x,y,z] = [x,y,z], pit refers to position index tensor
         self.register_buffer('pit', torch.ones(
             self.space_size).nonzero().view(self.space_size + [3]))
+        self.register_buffer('empty_tensor', torch.tensor([]))
 
     def forward(self, predictions, targets):
         device = self.pit.device
@@ -181,7 +182,7 @@ class Analyzer(torch.nn.Module):
         return mask
 
     def count(self, info):
-
+        device = self.pit.device
         TP_index, P_pos, T_pos = info["TP_index_nms"], info["P_pos_nms"], info["T_pos"]
         batch_size = len(TP_index)
         dic = {}
@@ -192,16 +193,25 @@ class Analyzer(torch.nn.Module):
 
                 T_z, P_z = T_pos[batch][i][..., 2], P_pos[batch][i][..., 2]
 
-                TP_T_z = T_z[TP_index[batch][i][0]]
-
+                if TP_index[batch][i][0].nelement() != 0:
+                    TP_T_z = T_z[TP_index[batch][i][0]]
+                else:
+                    TP_T_z = self.empty_tensor
+                if TP_index[batch][i][0].nelement() != 0:
+                    TP_P_z = P_z[TP_index[batch][i][1]]
+                else:
+                    TP_P_z = self.empty_tensor
+                                    
                 split_past = 0
                 for split in self.split[1:]:
                     TP_num = torch.logical_and(
-                        TP_T_z > split_past, TP_T_z < split).sum().float()
+                        TP_P_z >= split_past, TP_P_z < split).sum().float()
                     FP_num = torch.logical_and(
-                        P_z > split_past, P_z < split).sum().float() - TP_num
+                        P_z >= split_past, P_z < split).sum().float() - TP_num
+                    TP_num = torch.logical_and(
+                        TP_T_z >= split_past, TP_T_z < split).sum().float()
                     FN_num = torch.logical_and(
-                        T_z > split_past, T_z < split).sum().float() - TP_num
+                        T_z >= split_past, T_z < split).sum().float() - TP_num
                     acc = TP_num / (TP_num + FP_num + FN_num)
                     suc = (FP_num == 0 and FN_num == 0).float()
                     key = f"{ele}-{split_past:3.1f}-{split:3.1f}"
@@ -218,6 +228,8 @@ class Analyzer(torch.nn.Module):
                         dic[f"{key}-FN"] = FN_num
                         dic[f"{key}-ACC"] = acc/batch_size
                         dic[f"{key}-SUC"] = suc/batch_size
+                        
+                    split_past = split
         return dic
 
     def to_poscar(self, predictions, filenames, out_dir, nms=True, npy=True):

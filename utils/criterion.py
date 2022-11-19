@@ -47,7 +47,7 @@ class Criterion(nn.Module):
         
         return loss
 
-    def loss_local(self,epoch, info, sap = True):
+    def loss_local(self,epoch, info):
         # -----------------------------------------------
         device = self.decay_paras.device
         ele_name = self.ele_name
@@ -59,52 +59,47 @@ class Criterion(nn.Module):
         
         P_list, T_list, TP_index_list, P_pos_list, T_pos_list = info["P"], info["T"], info["TP_index"], info["P_pos"], info["T_pos"]
         for P,T,TP_index,P_pos,T_pos in zip(P_list, T_list, TP_index_list, P_pos_list, T_pos_list):
-            try:
-                one_sample_loss = torch.tensor([0.0], requires_grad=True, device=device)
-                if sap:
-                    # -----------------------------------------------
-                    # Including O-O, H-H, O-H, H-O
-                    for i, ele in enumerate(ele_name):
-                        for j,o_ele in enumerate(ele_name):
-                            if o_ele == "O":
-                                factor = 0.6
-                            else:
-                                factor = 1.8
-                            if len(TP_index[i][0]) == 0 or len(TP_index[i][1]) == 0:
-                                break
-                            TP_T_pos = T_pos[i][TP_index[i][0]]
-                            TP_P_pos = P_pos[i][TP_index[i][1]]
-                            
-                            d_T = torch.cdist(TP_T_pos,T_pos[j]).int()
-                            d_P = torch.cdist(TP_P_pos,P_pos[j]).int()
-
-                            if i == j:
-                                q1 = torch.arange(0,d_T.shape[0])
-                                q2 = TP_index[j][0]
-                                d_T[q1,q2] = 10
-                                q1 = torch.arange(0,d_P.shape[0])
-                                q2 = TP_index[j][1]
-                                d_P[q1,q2] = 10
+            one_sample_loss = torch.tensor([0.0], requires_grad=True, device=device)
+            # -----------------------------------------------
+            # Including O-O, H-H, O-H, H-O
+            for i, ele in enumerate(ele_name):
+                if TP_index[i][0].nelement() == 0:
+                    continue
+                for j,o_ele in enumerate(ele_name):
+                    if o_ele == "O":
+                        continue
+                    TP_T_pos = T_pos[i][TP_index[i][0]]
+                    TP_P_pos = P_pos[i][TP_index[i][1]]
                     
-                            for r in range(6):
-                                # To count for the near atoms
-                                mask = (d_P == r).float()
-                                np1 = mask.sum(1)
-                                np2 = (d_T == r).float().sum(1) 
-                                NP = (np1 - np2).abs().unsqueeze(0)
-                                one_sample_loss = one_sample_loss + self.decay_paras[r] * NP.mm(mask).mv(P[j][...,3].sigmoid()) * factor
-                            # Each prediction should be divided by the TP number and times FP/T
-                    loss_local = loss_local + one_sample_loss/ TP_T_pos.shape[0]
-            except:
-                print(len(P),len(T),len(TP_index),len(P_pos),len(T_pos))
-                print(P,T,TP_index,P_pos,T_pos)
-                raise IndexError("what")
-        
-        loss_local = loss_local / len(T_list)
+                    d_T = torch.cdist(TP_T_pos,T_pos[j]).int()
+                    d_P = torch.cdist(TP_P_pos,P_pos[j]).int()
 
-        loss_local = loss_local / loss_local.item() * 0.33 * self.loss
+                    if i == j:
+                        q1 = torch.arange(0,d_T.shape[0])
+                        q2 = TP_index[j][0]
+                        d_T[q1,q2] = 10
+                        q1 = torch.arange(0,d_P.shape[0])
+                        q2 = TP_index[j][1]
+                        d_P[q1,q2] = 10
+            
+                    for r in range(4):
+                        # To count for the near atoms
+                        mask = (d_P == r).float()
+                        np1 = mask.sum(1)
+                        np2 = (d_T == r).float().sum(1) 
+                        NP = (np1 - np2).abs().unsqueeze(0)
+                        one_sample_loss = one_sample_loss + self.decay_paras[r] * NP.mm(mask).mv(P[j][...,3].sigmoid()) * 2
+                    # Each prediction should be divided by the TP number and times FP/T
+            loss_local = loss_local + one_sample_loss/ max(1,TP_index[i][0].nelement())
+    
+        loss_local = loss_local / len(T_list)
         
-        return loss_local
+        if loss_local[0] == 0:
+            return torch.tensor([0.0], requires_grad=True, device = device)
+        else:
+            return loss_local / loss_local.item() * 0.2 * self.loss
+        
+        
     
 if __name__ == '__main__':
     pass

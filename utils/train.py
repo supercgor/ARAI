@@ -337,7 +337,7 @@ class Trainer():
         save = False
         ele_ACC = []
         for ele in elem:
-            ele_ACC.append(sum(log_count[f"{ele}-{i}-ACC"] for i in split))
+            ele_ACC.append(min(log_count[f"{ele}-{i}-ACC"] for i in split))
         if (ele_ACC[0] > self.best_ACC[0]) and (ele_ACC[1] > self.best_ACC[1]):
             save = True
         elif (ele_ACC[0] < self.best_ACC[0]) and (ele_ACC[1] > self.best_ACC[1]):
