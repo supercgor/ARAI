@@ -86,7 +86,9 @@ Make sure that the dataset exists in the father dir. and data dir contains all o
 |    |
 |    |--data/
 |    |
-|    |--train_FileList/
+|    |--filelist/
+|    |
+|    |--label/
 |
 |--afm_go
 |    |
