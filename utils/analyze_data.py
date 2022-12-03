@@ -3,6 +3,7 @@ import torch
 from .const import LOG_DIR, DATE
 from numpy import pi
 
+
 class Analyzer(torch.nn.Module):
     def __init__(self, cfg):
         super(Analyzer, self).__init__()
@@ -27,7 +28,7 @@ class Analyzer(torch.nn.Module):
 
         self.P_threshold = cfg.OTHER.THRESHOLD
         self.T_threshold = 0.5
-        
+
         self.rdf = RDF(cfg)
 
         # Construct the pit-tensor
@@ -37,6 +38,7 @@ class Analyzer(torch.nn.Module):
         self.register_buffer('empty_tensor', torch.tensor([]))
 
     def forward(self, predictions, targets):
+        assert predictions.shape == targets.shape, f"prediction shape {predictions.shape} doesn't match {targets.shape}"
         device = self.pit.device
         """_summary_
 
@@ -69,68 +71,54 @@ class Analyzer(torch.nn.Module):
         targets = targets.permute(0, 4, 1, 2, 3, 5)
 
         # ------------------------------------
-        # Statistics
-        # Find T and P (sometimes P will contain repeat elemenets for two or more near box) #
-        # mask out for those bigger than the thrushold and turn them into [...[x,y,z]]
+        pit = self.pit
+        lattice_expand = self.lattice_expand
         # ------------------------------------
 
         for batch in range(batch_size):
-            P = []
-            P_nms = []
-            TP_index = []
-            TP_index_nms = []
-            P_pos = []
-            P_pos_nms = []
-            T = []
-            T_pos = []
-            for ele in range(self.elem_num):
-                prediction = predictions[batch, ele].detach()
-                target = targets[batch, ele].detach()
-                # take all fulfilled elements
+
+            T, P, P_nms, T_pos, P_pos, P_pos_nms, TP_index, TP_index_nms = [],[],[],[],[],[],[],[]
+
+            for ele, diameter in enumerate(self.ele_diameter):
+                prediction = predictions[batch, ele]
+                target = targets[batch, ele]
+
                 mask_t = target[..., 3] > self.T_threshold
-                ele_T = (target[..., :3] + self.pit)[mask_t] * \
-                    self.lattice_expand
-
                 mask_p = prediction[..., 3] > self.P_threshold
-                mask_nms = self.nms(prediction, self.ele_diameter[ele])
 
-                ele_P = (prediction[..., :3] +
-                         self.pit)[mask_p] * self.lattice_expand
-                ele_P_nms = ele_P[mask_nms]
+                T_position = (target[..., :3] + pit)[mask_t] * lattice_expand
+                P_position = (prediction[..., :3] + pit)[mask_p] * lattice_expand
+
+                prediction_nms, P_nmspos = self.nms(prediction, diameter)
 
                 # Matching the nearest
-                TP_dist_nms = torch.cdist(ele_T, ele_P_nms, p=2)
-                # Figure out the indices of TP in T and P tensor
-                TP_T_index_nms = (TP_dist_nms < self.ele_diameter[ele]).sum(
-                    1).nonzero()
-                TP_P_index_nms = torch.tensor([], device=device)
-                if TP_T_index_nms.shape[0] >= 1:
+                TP_dist_nms = torch.cdist(T_position, P_nmspos)
+                TP_T_index_nms = (TP_dist_nms < diameter).sum(1).nonzero()
+
+                if TP_T_index_nms.nelement() != 0:
                     TP_T_index_nms = TP_T_index_nms.squeeze(1)
                     TP_P_index_nms = TP_dist_nms[TP_T_index_nms].min(
                         1).indices
+                else:
+                    TP_P_index_nms = self.empty_tensor
 
-                TP_dist = torch.cdist(ele_T, ele_P, p=2)
-                # Figure out the indices of TP in T and P tensor
-                TP_T_index = (TP_dist < self.ele_diameter[ele]).sum(
-                    1).nonzero()
-                TP_P_index = torch.tensor([], device=device)
-                if TP_T_index.shape[0] >= 1:
+                TP_dist = torch.cdist(T_position, P_position)
+                TP_T_index = (TP_dist < diameter).sum(1).nonzero()
+
+                if TP_T_index.nelement() != 0:
                     TP_T_index = TP_T_index.squeeze(1)
                     TP_P_index = TP_dist[TP_T_index].min(1).indices
+                else:
+                    TP_P_index = self.empty_tensor
 
-            # ---------------------------
-            # Mark raw elements of the prediction and targets
-            # P and T can do gradient descend; TP_index and P_pos,T_pos are detached
-            # ---------------------------
-
-                P.append(predictions[batch, ele][mask_p])
-                P_nms.append(predictions[batch, ele][mask_p][mask_nms])
-                T.append(targets[batch, ele][mask_t])
+                P.append(prediction[mask_p])
+                P_nms.append(prediction_nms)
+                T.append(target[mask_t])
                 TP_index.append([TP_T_index, TP_P_index])
                 TP_index_nms.append([TP_T_index_nms, TP_P_index_nms])
-                P_pos.append(ele_P)
-                P_pos_nms.append(ele_P_nms)
-                T_pos.append(ele_T)
+                P_pos.append(P_position)
+                P_pos_nms.append(P_nmspos)
+                T_pos.append(T_position)
 
             total_P.append(P)
             total_P_nms.append(P_nms)
@@ -150,36 +138,33 @@ class Analyzer(torch.nn.Module):
                 "P_pos_nms": total_P_pos_nms,
                 "T_pos": total_T_pos, }
 
-    def nms(self, position: torch.Tensor, ele_d: float) -> torch.Tensor:
-        """_summary_
+    def nms(self, prediction, diameter) -> torch.Tensor:
+        
+        # ------------------------------------
+        pit = self.pit
+        lattice_expand = self.lattice_expand
+        # ------------------------------------
+        
+        mask_p = prediction[..., 3] > self.P_threshold
+        P_position = (prediction[..., :3] + pit)[mask_p] * lattice_expand
 
-        Args:
-            position (torch.Tensor): 2D tensor with (offset)x, y, z, confitdence
-            ele_d (float): elements diameter
+        index = torch.argsort(prediction[...,3][mask_p])
 
-        Returns:
-            torch.Tensor: 1D mask
-        """
-        mask = position[..., 3] >= self.P_threshold
+        sorted_prediction = P_position[index]
 
-        pos_P = (position[..., :3] + self.pit)[mask] * self.lattice_expand
-        position = position[mask]
-        sort_index = torch.argsort(position[..., 3], descending=True)
-        pos_P = pos_P[sort_index]
-        PP_dist = torch.cdist(pos_P, pos_P, p=2)
+        dist_matrix = torch.cdist(sorted_prediction, sorted_prediction)
 
-        # which show that whether the points should be restrained.
-        # improve great performance ~ 100 times need 0.058s
-        PP_dist = torch.triu(PP_dist < ele_d, diagonal=1).float()
-        restrain_tensor = PP_dist.sum(0)
+        dist_matrix = torch.triu(dist_matrix < diameter, diagonal=1).float()
+
+        restrain_tensor = dist_matrix.sum(0)
         restrain_one = (restrain_tensor != 0).unsqueeze(0).float()
-        correct = restrain_one.mm(PP_dist)
+        correct = restrain_one.mm(dist_matrix)
         restrain_tensor = restrain_tensor - correct
         selection = restrain_tensor[0] == 0
 
-        mask = torch.sort(sort_index[selection]).values
-
-        return mask
+        return prediction[mask_p][index[selection]], sorted_prediction[selection] # prediction, position
+        # which show that whether the points should be restrained.
+        # improve great performance ~ 100 times need 0.058s
 
     def count(self, info):
         device = self.pit.device
@@ -197,11 +182,11 @@ class Analyzer(torch.nn.Module):
                     TP_T_z = T_z[TP_index[batch][i][0]]
                 else:
                     TP_T_z = self.empty_tensor
-                if TP_index[batch][i][0].nelement() != 0:
+                if TP_index[batch][i][1].nelement() != 0:
                     TP_P_z = P_z[TP_index[batch][i][1]]
                 else:
                     TP_P_z = self.empty_tensor
-                                    
+
                 split_past = 0
                 for split in self.split[1:]:
                     TP_num = torch.logical_and(
@@ -228,12 +213,12 @@ class Analyzer(torch.nn.Module):
                         dic[f"{key}-FN"] = FN_num
                         dic[f"{key}-ACC"] = acc/batch_size
                         dic[f"{key}-SUC"] = suc/batch_size
-                        
+
                     split_past = split
         return dic
 
-    def to_poscar(self, predictions, filenames, out_dir, nms=True, npy=True):
-        
+    def to_poscar(self, predictions, filenames, out_dir, nms=True, npy=False):
+
         rdf = self.rdf
         batch_size = predictions.size(0)
 
@@ -251,13 +236,9 @@ class Analyzer(torch.nn.Module):
         P_pos = []
         for batch in range(batch_size):
             _P_pos = []
-            for ele in range(self.elem_num):
+            for ele, diameter in enumerate(self.ele_diameter):
                 prediction = predictions[batch, ele]
-                mask_p = prediction[..., 3] > self.P_threshold
-                mask_nms = self.nms(prediction, self.ele_diameter[ele])
-                ele_P = (prediction[..., :3] +
-                         self.pit)[mask_p] * self.lattice_expand
-                ele_P = ele_P[mask_nms]
+                prediction_nms, ele_P = self.nms(prediction, diameter)
                 ele_P = ele_P / self.real_size
                 _P_pos.append(ele_P)
             rdf(_P_pos)
@@ -280,10 +261,11 @@ class Analyzer(torch.nn.Module):
                     for atom in P_ele:
                         output += f" {atom[0]:.8f} {atom[1]:.8f} {atom[2]:.8f} T T T\n"
 
-                save_dir = os.path.join(out_dir, self.cfg.TRAIN.CHECKPOINT.split("/")[-1][:-4])
+                save_dir = os.path.join(
+                    out_dir, self.cfg.TRAIN.CHECKPOINT.split("/")[-1][:-4])
                 if not os.path.exists(save_dir):
                     os.mkdir(save_dir)
-                    
+
                 file_path = os.path.join(save_dir, filename + '.poscar')
                 with open(file_path, 'w') as f:
                     f.write(output)
@@ -302,13 +284,16 @@ class RDF(torch.nn.Module):
         self.inver_delta = 1 / delta
 
         self.total = int(stop * self.inver_delta)
-        
+
         self.register_buffer('real_size', torch.tensor(cfg.DATA.REAL_SIZE))
-        self.register_buffer('vol', self.real_size[0] * self.real_size[1] * self.real_size[2])
-        self.register_buffer('slice_vol', torch.arange(delta/2,stop,delta) ** 1 * delta * 2 * pi * 3)
+        self.register_buffer(
+            'vol', self.real_size[0] * self.real_size[1] * self.real_size[2])
+        self.register_buffer('slice_vol', torch.arange(
+            delta/2, stop, delta) ** 1 * delta * 2 * pi * 3)
 
         self.register_buffer("number", torch.zeros(1))
-        self.register_buffer("count", torch.zeros(len(self.elem), len(self.elem), self.total))
+        self.register_buffer("count", torch.zeros(
+            len(self.elem), len(self.elem), self.total))
 
     def forward(self, pos: list):
         device = self.number.device
@@ -316,16 +301,19 @@ class RDF(torch.nn.Module):
             for j, o_ele in enumerate(self.elem):
                 ele_pos = pos[i]
                 other_pos = pos[j]
-                density =len(other_pos) / self.vol
-                dist = (torch.cdist(ele_pos * self.real_size, other_pos * self.real_size) * self.inver_delta).int()
+                density = len(other_pos) / self.vol
+                dist = (torch.cdist(ele_pos * self.real_size,
+                        other_pos * self.real_size) * self.inver_delta).int()
 
                 if i == j:
                     dist.fill_diagonal_(9999)
 
-                dist_count = torch.unique(dist, return_counts=True, sorted=True)
+                dist_count = torch.unique(
+                    dist, return_counts=True, sorted=True)
                 mask = dist_count[0] < self.stop * self.inver_delta
-                dist_count = (dist_count[0][mask].tolist(), dist_count[1][mask]/density)
-                buf = torch.zeros(self.total, device = device)
+                dist_count = (dist_count[0][mask].tolist(),
+                              dist_count[1][mask]/density)
+                buf = torch.zeros(self.total, device=device)
                 buf[dist_count[0]] = dist_count[1]
                 buf = buf / self.slice_vol / len(ele_pos)
                 self.count[i, j] += buf

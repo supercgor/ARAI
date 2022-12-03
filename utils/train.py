@@ -1,6 +1,7 @@
 import os
 import time
 import torch
+import numpy as np
 
 from .model_saver import ModelSaver
 from .log import Logger
@@ -102,22 +103,25 @@ class Trainer():
                 print(f'\r{i}/{len(self.train_loader)}', end='')
 
             inputs = inputs.cuda(non_blocking= True)
+
             targets = targets.cuda(non_blocking= True)
-            
+
             predictions = model(inputs)
-            
+
             loss = criterion(predictions, targets)
 
             info = analyzer(predictions, targets)
-                        
+
             loss_local = criterion.loss_local(epoch, info)
             
             loss = loss + loss_local
-
+            
             loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(), cfg.TRAIN.CLIP_GRAD, error_if_nonfinite=True)
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.TRAIN.CLIP_GRAD, error_if_nonfinite=True)
+            
             optimizer.step()
+
             optimizer.zero_grad(set_to_none=True)
 
             log_dic['count'].append(analyzer.count(info))
@@ -205,10 +209,10 @@ class Trainer():
         logger = self.logger
         model = self.model
         analyzer = self.analyzer
-        criterion = self.criterion
         cfg = self.cfg
-        test_loader = make_dataset('test')
-        save_dir = os.path.join(cfg.DATA.TEST_PATH, cfg.PRED.SAVE_DIR)
+        criterion = Criterion(cfg,cfg.TRAIN.CRITERION.LOCAL).cuda()
+        test_loader = make_dataset('test', cfg)
+        save_dir = os.path.join(cfg.PRED.PATH, cfg.PRED.SAVE_DIR)
         if not os.path.exists(save_dir):
             os.mkdir(save_dir)
         
@@ -228,7 +232,7 @@ class Trainer():
             
             if cfg.TRAIN.SHOW:
                 t = time.time()
-                print(f'\r{i}/{len(self.test_loader)}', end='')
+                print(f'\r{i}/{len(test_loader)}', end='')
 
             inputs = inputs.cuda(non_blocking= True)
             targets = targets.cuda(non_blocking= True)

@@ -1,0 +1,61 @@
+[11/27/2022 10:45:24 - main -     INFO]: Load model parameters from /gpfs/share/home/2000012508/structural_ml/afm_go-1/checkpoints/./22-11-21-12/CP49_O0.8409_H0.6786_0.166486.pkl
+[11/27/2022 10:45:24 - main -     INFO]: Use cuda: Tesla P100-PCIE-16GB
+[11/27/2022 10:45:24 - main -     INFO]: Start testing.
+[11/27/2022 11:01:37 - main -     INFO]: Testing info T260
+Max memory use=6187.86MB
+Testing info: loss = 0.580587267875671
+O(0.0-6.0A): ACC = 0.21393524 SUC = 0.00000000 TP =   222279 FP =   195627 FN =   651763
+O(6.0-9.0A): ACC = 0.69927150 SUC = 0.00268955 TP =   260193 FP =     9815 FN =   104431
+H(0.0-6.0A): ACC = 0.08226232 SUC = 0.00000000 TP =   180431 FP =   334032 FN =  1551412
+H(6.0-9.0A): ACC = 0.52209771 SUC = 0.00000000 TP =   432814 FP =    90541 FN =   312675
+[11/27/2022 11:01:37 - main -     INFO]: Spend time: 972.96s
+[11/27/2022 11:01:37 - main -     INFO]: End testing
+[11/27/2022 11:03:17 - main -     INFO]: Load model parameters from /gpfs/share/home/2000012508/structural_ml/afm_go-1/checkpoints/./22-11-21-12/CP49_O0.8409_H0.6786_0.166486.pkl
+[11/27/2022 11:03:17 - main -     INFO]: Use cuda: Tesla P100-PCIE-16GB
+[11/27/2022 11:03:17 - main -     INFO]: Start testing.
+[11/27/2022 11:13:56 - main -     INFO]: Testing info T160
+Max memory use=6187.50MB
+Testing info: loss = 0.249315798282623
+O(0.0-6.0A): ACC = 0.84537345 SUC = 0.00000000 TP =   458645 FP =    14411 FN =    70097
+O(6.0-9.0A): ACC = 0.95450085 SUC = 0.21903284 TP =   176262 FP =      718 FN =     7716
+H(0.0-6.0A): ACC = 0.51326424 SUC = 0.00000000 TP =   606216 FP =   190328 FN =   405325
+H(6.0-9.0A): ACC = 0.90584642 SUC = 0.00273723 TP =   382093 FP =     8450 FN =    31806
+[11/27/2022 11:13:56 - main -     INFO]: Spend time: 639.10s
+[11/27/2022 11:13:56 - main -     INFO]: End testing
+[11/27/2022 11:30:33 - main -     INFO]: Load model parameters from /gpfs/share/home/2000012508/structural_ml/afm_go-1/checkpoints/22-11-21-15/CP49_O0.6384_H0.4371_0.199353.pkl
+[11/27/2022 11:30:33 - main -     INFO]: Use cuda: Tesla P100-PCIE-16GB
+[11/27/2022 11:30:33 - main -     INFO]: Start prediction.
+[11/27/2022 11:30:44 - main -     INFO]: Spend time: 11.40s
+[11/27/2022 11:30:44 - main -     INFO]: End prediction
+[11/27/2022 11:34:40 - main -     INFO]: Load model parameters from /gpfs/share/home/2000012508/structural_ml/afm_go-1/checkpoints/CP49_O0.8409_H0.6786_0.166486.pkl
+[11/27/2022 11:34:40 - main -     INFO]: Use cuda: Tesla P100-PCIE-16GB
+[11/27/2022 11:34:58 - main -     INFO]: Load model parameters from /gpfs/share/home/2000012508/structural_ml/afm_go-1/checkpoints/CP49_O0.8409_H0.6786_0.166486.pkl
+[11/27/2022 11:34:58 - main -     INFO]: Use cuda: Tesla P100-PCIE-16GB
+[11/27/2022 11:34:58 - main -     INFO]: Start prediction.
+[11/27/2022 11:35:10 - main -     INFO]: Spend time: 11.20s
+[11/27/2022 11:35:10 - main -     INFO]: End prediction
+[11/27/2022 14:36:30 - main -     INFO]: Load model parameters from /gpfs/share/home/2000012508/structural_ml/afm_go-1/checkpoints/CP49_O0.8409_H0.6786_0.166486.pkl
+[11/27/2022 14:42:42 - main -     INFO]: Load model parameters from /gpfs/share/home/2000012508/structural_ml/afm_go-1/checkpoints/CP49_O0.8409_H0.6786_0.166486.pkl
+[11/27/2022 14:42:42 - main -     INFO]: Use cuda: Tesla P100-PCIE-16GB
+[11/27/2022 14:42:42 - main -     INFO]: Start testing.
+[11/27/2022 14:53:31 - main -     INFO]: \Testing info
+Max memory use=6186.85MB
+Testing info: loss = 0.712058424949646
+O(0.0-6.0A): ACC = 0.05233609 SUC = 0.00000000 TP =    34198 FP =   153711 FN =   443012
+O(6.0-9.0A): ACC = 0.77889538 SUC = 0.01671007 TP =   173036 FP =     4670 FN =    46882
+H(0.0-6.0A): ACC = 0.02187685 SUC = 0.00000000 TP =    25528 FP =   206111 FN =   902827
+H(6.0-9.0A): ACC = 0.49856880 SUC = 0.00000000 TP =   265406 FP =    66252 FN =   200495
+[11/27/2022 14:53:32 - main -     INFO]: Spend time: 649.43s
+[11/27/2022 14:53:32 - main -     INFO]: End testing
+[11/27/2022 15:32:45 - main -     INFO]: Load model parameters from /gpfs/share/home/2000012508/structural_ml/afm_go-1/checkpoints/CP49_O0.8409_H0.6786_0.166486.pkl
+[11/27/2022 15:32:45 - main -     INFO]: Use cuda: Tesla P100-PCIE-16GB
+[11/27/2022 15:32:45 - main -     INFO]: Start testing.
+[11/27/2022 15:49:16 - main -     INFO]: \Testing info
+Max memory use=6188.19MB
+Testing info: loss = 0.714864790439606
+O(0.0-6.0A): ACC = 0.05303866 SUC = 0.00000000 TP =    68424 FP =   322990 FN =   864320
+O(6.0-9.0A): ACC = 0.74328184 SUC = 0.00022563 TP =   314563 FP =    10747 FN =   100538
+H(0.0-6.0A): ACC = 0.02013400 SUC = 0.00000000 TP =    45480 FP =   386798 FN =  1761274
+H(6.0-9.0A): ACC = 0.49054077 SUC = 0.00000000 TP =   494918 FP =   121456 FN =   394018
+[11/27/2022 15:49:16 - main -     INFO]: Spend time: 990.94s
+[11/27/2022 15:49:16 - main -     INFO]: End testing

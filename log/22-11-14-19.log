@@ -1,3 +1,0 @@
-[11/14/2022 19:59:12 - main -     INFO]: Load model parameters from /home/supercgor/gitfile/structural_ml/afm_go/checkpoints/CP49_O0.9790_H0.9175_0.075678.pkl
-[11/14/2022 19:59:12 - main -     INFO]: Use cuda: NVIDIA GeForce GTX 1650 with Max-Q Design
-[11/14/2022 19:59:12 - main -     INFO]: Start prediction.

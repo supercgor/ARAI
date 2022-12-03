@@ -33,11 +33,11 @@ _C.DATA.VAL_PATH = _root_path
 # Test data path
 _C.DATA.TEST_PATH = _root_path
 # Train file list
-_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'train.filelist')
+_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path,'all_fileList', 'train.filelist')
 # Val file list
-_C.DATA.VAL_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'valid.filelist')
+_C.DATA.VAL_FILE_LIST = os.path.join(_root_path,'all_fileList', 'valid.filelist')
 # Test file list
-_C.DATA.TEST_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'test.filelist')
+_C.DATA.TEST_FILE_LIST = os.path.join(_root_path,'fileList', 'prism_valid.filelist')
 # Label path
 _C.DATA.LABEL_PATH = os.path.join(_root_path, 'label')
 
@@ -52,7 +52,7 @@ _C.MODEL.CHANNELS = 32
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 # 0 for using one GPU or list for Parallel device idx 
-_C.TRAIN.DEVICE = [0,1]
+_C.TRAIN.DEVICE = [0]
 # Training epochs
 _C.TRAIN.EPOCHS = 70
 # learning rate
@@ -64,7 +64,7 @@ _C.TRAIN.MAX_SAVE = 3
 # Show the progress
 _C.TRAIN.SHOW = True
 # Checkpoint path
-_C.TRAIN.CHECKPOINT = "22-11-21-08/CP09_O0.7573_H0.3559_0.192382.pkl"
+_C.TRAIN.CHECKPOINT = "CP49_O0.8409_H0.6786_0.166486.pkl"
 # Criterion
 _C.TRAIN.CRITERION = CN()
 # Factor to increase the loss of positive sample
@@ -99,6 +99,7 @@ _C.OTHER.SPLIT = [0.0,6.0,9.0]
 _C.PRED = CN()
 # Prediction data root file
 _C.PRED.PATH = _root_path
+#_C.PRED.PATH = "/gpfs/share/home/2000012508/structural_ml/exp_ice"
 # Prediction file list
 _C.PRED.FILE_LIST = "pre.FileList"
 # Prediction result save file dir

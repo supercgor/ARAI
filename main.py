@@ -1,5 +1,5 @@
 from utils.tools import Parser
-from config_9A import get_config
+from config_9A_all import get_config
 from utils.train import Trainer
 
 # ---------------------------------------
@@ -10,7 +10,7 @@ def run():
     options, args = parser.parse_args()
     
     # debug
-    options.mode = 'train'
+    #options.mode = 'train'
 
     cfg = get_config(options)
 
