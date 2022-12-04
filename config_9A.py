@@ -18,11 +18,11 @@ _C.DATA.ELE_NAME = ('O', 'H')
 # Real box size
 _C.DATA.REAL_SIZE = [25,25,9]
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.DATA.BATCH_SIZE = 32
+_C.DATA.BATCH_SIZE = 2
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.DATA.PIN_MEMORY = True
 # Number of data loading threads
-_C.DATA.NUM_WORKERS = 10
+_C.DATA.NUM_WORKERS = 5
 
 # absp root is utils, so use 2 ..
 _root_path = absp('../../AFM_3d')
@@ -33,9 +33,9 @@ _C.DATA.VAL_PATH = _root_path
 # Test data path
 _C.DATA.TEST_PATH = _root_path
 # Train file list
-_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'train.filelist')
+_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'train_L.filelist')
 # Val file list
-_C.DATA.VAL_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'valid.filelist')
+_C.DATA.VAL_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'valid_L.filelist')
 # Test file list
 _C.DATA.TEST_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'test.filelist')
 # Label path
@@ -52,9 +52,9 @@ _C.MODEL.CHANNELS = 32
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 # 0 for using one GPU or list for Parallel device idx 
-_C.TRAIN.DEVICE = [0,1]
+_C.TRAIN.DEVICE = [0]
 # Training epochs
-_C.TRAIN.EPOCHS = 70
+_C.TRAIN.EPOCHS = 5
 # learning rate
 _C.TRAIN.LR = 1e-4
 # Clip gradient norm
@@ -64,13 +64,13 @@ _C.TRAIN.MAX_SAVE = 3
 # Show the progress
 _C.TRAIN.SHOW = True
 # Checkpoint path
-_C.TRAIN.CHECKPOINT = "22-11-21-08/CP09_O0.7573_H0.3559_0.192382.pkl"
+_C.TRAIN.CHECKPOINT = ""
 # Criterion
 _C.TRAIN.CRITERION = CN()
 # Factor to increase the loss of positive sample
 _C.TRAIN.CRITERION.POS_WEIGHT = (5.0, 5.0)
 # Weight of confidence
-_C.TRAIN.CRITERION.WEIGHT_CONFIDENCE = 1.0
+_C.TRAIN.CRITERION.WEIGHT_CONFIDENCE = 2.0
 # Weight of offset in x-axis and y-axis
 _C.TRAIN.CRITERION.WEIGHT_OFFSET_XY = 0.5
 # Weight of offset in z-axis
@@ -78,7 +78,7 @@ _C.TRAIN.CRITERION.WEIGHT_OFFSET_Z = 0.5
 # Reduction of offset
 _C.TRAIN.CRITERION.REDUCTION = 'mean'
 # Enable local loss after epoch
-_C.TRAIN.CRITERION.LOCAL = 50
+_C.TRAIN.CRITERION.LOCAL = 999
 # Decay para
 _C.TRAIN.CRITERION.DECAY = [0.9,0.7,0.5,0.3]
 
@@ -87,11 +87,11 @@ _C.TRAIN.CRITERION.DECAY = [0.9,0.7,0.5,0.3]
 # -----------------------------------------------------------------------------
 _C.OTHER = CN()
 # Threshold
-_C.OTHER.THRESHOLD = 1
+_C.OTHER.THRESHOLD = 0
 # NMS
 _C.OTHER.NMS = True
 # Split space
-_C.OTHER.SPLIT = [0.0,6.0,9.0]
+_C.OTHER.SPLIT = [0.0,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0]
 
 # -----------------------------------------------------------------------------
 # Predict settings

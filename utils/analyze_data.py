@@ -197,8 +197,12 @@ class Analyzer(torch.nn.Module):
                         TP_T_z >= split_past, TP_T_z < split).sum().float()
                     FN_num = torch.logical_and(
                         T_z >= split_past, T_z < split).sum().float() - TP_num
-                    acc = TP_num / (TP_num + FP_num + FN_num)
-                    suc = (FP_num == 0 and FN_num == 0).float()
+                    if (TP_num + FP_num + FN_num) == 0:
+                        acc = torch.ones(1, device=device).squeeze()
+                        suc = acc
+                    else:
+                        acc = TP_num / (TP_num + FP_num + FN_num)
+                        suc = (FP_num == 0 and FN_num == 0).float()
                     key = f"{ele}-{split_past:3.1f}-{split:3.1f}"
 
                     if f"{key}-TP" in dic:
