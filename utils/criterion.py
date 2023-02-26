@@ -97,7 +97,7 @@ class Criterion(nn.Module):
         if loss_local[0] == 0:
             return torch.tensor([0.0], requires_grad=True, device = device)
         else:
-            return loss_local / loss_local.item() * 0.2 * self.loss
+            return loss_local / loss_local.item() * 0.1 * self.loss
         
         
     

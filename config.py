@@ -134,13 +134,35 @@ def get_config(options = None):
         if options.model is not None:
             cfg.TRAIN.CHECKPOINT = absp("../checkpoints/" + options.model)
         if options.dataset is not None:
-            cfg.DATA.TRAIN_PATH = absp("../../" + options.dataset)
-            cfg.DATA.VAL_PATH = absp("../../" + options.dataset)
-            cfg.DATA.TEST_PATH = absp("../../" + options.dataset)
-            cfg.DATA.TRAIN_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'train_FileList')
-            cfg.DATA.VAL_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'train_FileList')
-            cfg.DATA.TEST_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'train_FileList')
-            cfg.DATA.LABEL_PATH = os.path.join(cfg.DATA.TRAIN_PATH, 'label')
+            _root_path = absp("../../" + options.dataset.split("/")[0])
+            if len(options.dataset.split("/")) >= 2:
+                _filelist_path = options.dataset.split("/")[1]
+            else:
+                _filelist_path = ""
+            if len(options.dataset.split("/")) >= 3:
+                _filelist_name = options.dataset.split("/")[2]
+            else:
+                _filelist_name = ""
+            cfg.DATA.LABEL_PATH = os.path.join(_root_path, 'label')
+            if options.mode == "train":
+                cfg.DATA.TRAIN_PATH = _root_path
+                cfg.DATA.TRAIN_FILE_LIST = os.path.join(_filelist_path, 'train.filelist')
+                cfg.DATA.VAL_PATH = _root_path
+                cfg.DATA.VAL_FILE_LIST = os.path.join(_filelist_path, 'valid.filelist')
+            elif options.mode == "test":
+                cfg.DATA.TEST_PATH = _root_path
+                if _filelist_name == "":
+                    _filelist_name = 'test.filelist'
+                cfg.DATA.TEST_FILE_LIST = os.path.join(_filelist_path, _filelist_name)
+                print(cfg.DATA.TEST_FILE_LIST)
+            elif options.mode == "predict":
+                cfg.PRED.PATH = _root_path
+                if _filelist_name == "":
+                    _filelist_name = 'pre.filelist'
+                cfg.PRED.FILE_LIST = os.path.join(_filelist_path, _filelist_name)
+                print(cfg.PRED.FILE_LIST)
+
+            
         if options.log_name is not None:
             cfg.OTHER.LOG = options.log_name
         if options.worker is not None:

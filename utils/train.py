@@ -242,15 +242,12 @@ class Trainer():
             loss = criterion(predictions, targets)
 
             info = analyzer(predictions, targets)
-                        
-            loss_local = criterion.loss_local(999, info)
-            
-            loss = loss + loss_local
-
+                                    
             log_dic['count'].append(analyzer.count(info))
             log_dic['loss'].append(loss)
-                        
-            analyzer.to_poscar(predictions, filenames, save_dir)
+            
+            if i % len(test_loader)//2 == 0:
+                analyzer.to_poscar(predictions, filenames, save_dir)
 
             if cfg.TRAIN.SHOW:
                 print(
@@ -272,7 +269,7 @@ class Trainer():
         logger.test_info(log_dic)
         
         # -------------------------------------------
-        analyzer.rdf.save()
+        # analyzer.rdf.save()
         
         logger.info(f"Spend time: {time.time() - start_time:.2f}s")
         

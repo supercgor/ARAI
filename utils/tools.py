@@ -63,7 +63,7 @@ def Parser():
     parser.add_option(
         '--dataset',
         type = str,
-        help = 'the training dataset path, example: "bulk_ice"')
+        help = 'the training dataset path, example: "bulk_ice/filelist"')
     
     parser.add_option(
         '--log-name',

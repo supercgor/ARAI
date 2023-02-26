@@ -18,11 +18,11 @@ _C.DATA.ELE_NAME = ('O', 'H')
 # Real box size
 _C.DATA.REAL_SIZE = [25,25,9]
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.DATA.BATCH_SIZE = 2
+_C.DATA.BATCH_SIZE = 32
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.DATA.PIN_MEMORY = True
 # Number of data loading threads
-_C.DATA.NUM_WORKERS = 5
+_C.DATA.NUM_WORKERS = 12
 
 # absp root is utils, so use 2 ..
 _root_path = absp('../../AFM_3d')
@@ -33,11 +33,11 @@ _C.DATA.VAL_PATH = _root_path
 # Test data path
 _C.DATA.TEST_PATH = _root_path
 # Train file list
-_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'train_L.filelist')
+_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path,'all_fileList', 'train.filelist')
 # Val file list
-_C.DATA.VAL_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'valid_L.filelist')
+_C.DATA.VAL_FILE_LIST = os.path.join(_root_path,'all_fileList', 'valid.filelist')
 # Test file list
-_C.DATA.TEST_FILE_LIST = os.path.join(_root_path,'T_180_220_fileList', 'test.filelist')
+_C.DATA.TEST_FILE_LIST = os.path.join(_root_path,'all_fileList', 'test.filelist')
 # Label path
 _C.DATA.LABEL_PATH = os.path.join(_root_path, 'label')
 
@@ -52,9 +52,9 @@ _C.MODEL.CHANNELS = 32
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 # 0 for using one GPU or list for Parallel device idx 
-_C.TRAIN.DEVICE = [0]
+_C.TRAIN.DEVICE = [0,1]
 # Training epochs
-_C.TRAIN.EPOCHS = 5
+_C.TRAIN.EPOCHS = 95
 # learning rate
 _C.TRAIN.LR = 1e-4
 # Clip gradient norm
@@ -64,13 +64,13 @@ _C.TRAIN.MAX_SAVE = 3
 # Show the progress
 _C.TRAIN.SHOW = True
 # Checkpoint path
-_C.TRAIN.CHECKPOINT = ""
+_C.TRAIN.CHECKPOINT = "3D_babe.pkl"
 # Criterion
 _C.TRAIN.CRITERION = CN()
 # Factor to increase the loss of positive sample
 _C.TRAIN.CRITERION.POS_WEIGHT = (5.0, 5.0)
 # Weight of confidence
-_C.TRAIN.CRITERION.WEIGHT_CONFIDENCE = 2.0
+_C.TRAIN.CRITERION.WEIGHT_CONFIDENCE = 1.5
 # Weight of offset in x-axis and y-axis
 _C.TRAIN.CRITERION.WEIGHT_OFFSET_XY = 0.5
 # Weight of offset in z-axis
@@ -78,7 +78,7 @@ _C.TRAIN.CRITERION.WEIGHT_OFFSET_Z = 0.5
 # Reduction of offset
 _C.TRAIN.CRITERION.REDUCTION = 'mean'
 # Enable local loss after epoch
-_C.TRAIN.CRITERION.LOCAL = 999
+_C.TRAIN.CRITERION.LOCAL = 5
 # Decay para
 _C.TRAIN.CRITERION.DECAY = [0.9,0.7,0.5,0.3]
 
@@ -132,13 +132,35 @@ def get_config(options = None):
         if options.model is not None:
             cfg.TRAIN.CHECKPOINT = absp("../checkpoints/" + options.model)
         if options.dataset is not None:
-            cfg.DATA.TRAIN_PATH = absp("../../" + options.dataset)
-            cfg.DATA.VAL_PATH = absp("../../" + options.dataset)
-            cfg.DATA.TEST_PATH = absp("../../" + options.dataset)
-            cfg.DATA.TRAIN_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'train.filelist')
-            cfg.DATA.VAL_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'valid.filelist')
-            cfg.DATA.TEST_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'test.fileList')
-            cfg.DATA.LABEL_PATH = os.path.join(cfg.DATA.TRAIN_PATH, 'label')
+            _root_path = absp("../../" + options.dataset.split("/")[0])
+            if len(options.dataset.split("/")) >= 2:
+                _filelist_path = options.dataset.split("/")[1]
+            else:
+                _filelist_path = ""
+            if len(options.dataset.split("/")) >= 3:
+                _filelist_name = options.dataset.split("/")[2]
+            else:
+                _filelist_name = ""
+            cfg.DATA.LABEL_PATH = os.path.join(_root_path, 'label')
+            if options.mode == "train":
+                cfg.DATA.TRAIN_PATH = _root_path
+                cfg.DATA.TRAIN_FILE_LIST = os.path.join(_filelist_path, 'train.filelist')
+                cfg.DATA.VAL_PATH = _root_path
+                cfg.DATA.VAL_FILE_LIST = os.path.join(_filelist_path, 'valid.filelist')
+            elif options.mode == "test":
+                cfg.DATA.TEST_PATH = _root_path
+                if _filelist_name == "":
+                    _filelist_name = 'test.filelist'
+                cfg.DATA.TEST_FILE_LIST = os.path.join(_filelist_path, _filelist_name)
+                print(cfg.DATA.TEST_FILE_LIST)
+            elif options.mode == "predict":
+                cfg.PRED.PATH = _root_path
+                if _filelist_name == "":
+                    _filelist_name = 'pre.filelist'
+                cfg.PRED.FILE_LIST = os.path.join(_filelist_path, _filelist_name)
+                print(cfg.PRED.FILE_LIST)
+
+            
         if options.log_name is not None:
             cfg.OTHER.LOG = options.log_name
         if options.worker is not None:

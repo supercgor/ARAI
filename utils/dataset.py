@@ -142,7 +142,7 @@ def make_dataset(mode, cfg):
     
     elif mode == "test":
         test_dataset = AFMDataset(
-            cfg.DATA.VAL_PATH, 
+            cfg.DATA.TEST_PATH, 
             cfg.DATA.ELE_NAME, 
             file_list=cfg.DATA.TEST_FILE_LIST, 
             label=cfg.DATA.LABEL_PATH,
