@@ -1,6 +1,5 @@
 import torch
 from torch import nn
-from .dataset import AFMDataset, AFMPredictDataset
 from .const import MODEL_DIR
 import os
 

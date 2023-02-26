@@ -4,7 +4,7 @@
 ______________________________________________________________________
 
 <p align="center">
-  <a href="">AFM Ice Structure Prediction</a>
+  <a href="">Atomic Reconstruction on AFM Images</a>
 </p>
 
 
