@@ -3,36 +3,19 @@ import time
 import torch
 import numpy as np
 
-from .model_saver import ModelSaver
-from .log import Logger
-from .checker import *
-from .analyze_data import *
-from .criterion import Criterion
-from .tools import condense
-from .const import MODEL_SAVE_DIR
-from .dataset import make_dataset
-
-from network.unet3d_model import UNet3D
-
+from utils.analyze_data import *
+from utils.criterion import Criterion
+from utils.tools import condense
+from utils.dataset import make_dataset
+from utils.loader import Loader
 
 class Trainer():
     def __init__(self, cfg):
         self.cfg = cfg
-        cfg = self.cfg
         
-        self.logger = Logger(cfg)
+        self.ml, self.model, self.logger = Loader(cfg)
 
-        model = model_load(UNet3D, 
-                           cfg.MODEL.CHANNELS, 
-                           cfg.DATA.Z, 
-                           cfg.TRAIN.CHECKPOINT,
-                           logger = self.logger)
-
-        self.device_num = len(cfg.TRAIN.DEVICE)
-
-        self.model, self.device = gpu_condition(model, cfg.TRAIN.DEVICE, logger = self.logger)
-
-        self.analyzer = Analyzer(cfg).cuda()
+        self.analyzer = Analyzer(cfg)
         
     def fit(self):
         # --------------------------------------------------
@@ -41,8 +24,6 @@ class Trainer():
         cfg = self.cfg
         logger = self.logger
         
-        self.saver = ModelSaver(cfg.TRAIN.MAX_SAVE)
-
         self.train_loader = make_dataset('train', cfg)
         self.valid_loader = make_dataset('valid', cfg)
 
@@ -212,10 +193,8 @@ class Trainer():
         cfg = self.cfg
         criterion = Criterion(cfg,cfg.TRAIN.CRITERION.LOCAL).cuda()
         test_loader = make_dataset('test', cfg)
-        save_dir = os.path.join(cfg.PRED.PATH, cfg.PRED.SAVE_DIR)
-        if not os.path.exists(save_dir):
-            os.mkdir(save_dir)
-        
+        # save_dir = os.path.join(cfg.PRED.PATH, cfg.PRED.SAVE_DIR)
+ 
         # -------------------------------------------
 
         logger.info(f'Start testing.')
@@ -242,15 +221,12 @@ class Trainer():
             loss = criterion(predictions, targets)
 
             info = analyzer(predictions, targets)
-                        
-            loss_local = criterion.loss_local(999, info)
-            
-            loss = loss + loss_local
-
+                                    
             log_dic['count'].append(analyzer.count(info))
             log_dic['loss'].append(loss)
-                        
-            analyzer.to_poscar(predictions, filenames, save_dir)
+            
+            # if i % len(test_loader)//2 == 0:
+            #     analyzer.to_poscar(predictions, filenames, save_dir)
 
             if cfg.TRAIN.SHOW:
                 print(
@@ -272,7 +248,7 @@ class Trainer():
         logger.test_info(log_dic)
         
         # -------------------------------------------
-        analyzer.rdf.save()
+        # analyzer.rdf.save()
         
         logger.info(f"Spend time: {time.time() - start_time:.2f}s")
         
@@ -285,7 +261,6 @@ class Trainer():
         logger = self.logger
         model = self.model
         cfg = self.cfg
-        rdf = RDF(cfg)
         analyzer = self.analyzer
         predict_loader = make_dataset('predict', cfg)
 
@@ -318,7 +293,7 @@ class Trainer():
         
         # -------------------------------------------
   
-        analyzer.rdf.save()
+        # analyzer.rdf.save()
   
         logger.info(f"Spend time: {time.time() - start_time:.2f}s")
         
@@ -358,9 +333,8 @@ class Trainer():
             model_name = f"CP{epoch:02d}_"
             model_name += "_".join([f"{ele}{ACC.item():.4f}" for ele, ACC in zip(elem, ele_ACC)])
             model_name += f"_{self.best_LOSS:.6f}.pkl"
-            model_path = os.path.join(MODEL_SAVE_DIR, model_name)
             
-            self.saver.save_new_model(model, model_path, self.device_num > 1)
+            self.ml.save(model_name)
             
             logger.info(f"Saved a new model: {model_name}")
         else:

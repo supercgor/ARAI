@@ -6,7 +6,7 @@
 import os
 import torch
 from optparse import OptionParser
-from . import __version__, __date__
+from utils import __version__, __date__
 
 def mkdir(path):
     if not os.path.exists(path):
@@ -64,11 +64,26 @@ def Parser():
         '--dataset',
         type = str,
         help = 'the training dataset path, example: "bulk_ice"')
-    
+
     parser.add_option(
-        '--log-name',
+        '--train-filelist',
         type = str,
-        help = 'the log name')
+        help = 'the name of file list')
+
+    parser.add_option(
+        '--valid-filelist',
+        type = str,
+        help = 'the name of file list')
+
+    parser.add_option(
+        '--test-filelist',
+        type = str,
+        help = 'the name of file list')
+
+    parser.add_option(
+    '--pred-filelist',
+    type = str,
+    help = 'the name of file list')
     
     parser.add_option(
         '--worker',
@@ -89,6 +104,5 @@ def Parser():
         '--epoch',
         type = int,
         help = 'train epoch')
-    
 
     return parser

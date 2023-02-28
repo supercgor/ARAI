@@ -1,6 +1,6 @@
 import os
 import torch
-from .const import LOG_DIR, DATE
+from utils.const import LOG_DIR, DATE
 from numpy import pi
 
 

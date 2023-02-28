@@ -19,12 +19,13 @@ class UNet3D(nn.Module):
         self.up4 = Up(2 * channels, channels)
         self.out = Out(in_channels=channels)
 
-    def forward(self, x):
-        x1 = self.inc(x)
+    def forward(self, x): # (b , 10, 128, 128)
+        x1 = self.inc(x) # (b, )
+        print(shape[x1])
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x4 = self.down3(x3)
-        x5 = self.down4(x4)
+        x5 = self.down4(x4) # ( b ,)
         x = self.up1(x4, x5)
         x = self.up2(x3, x)  # (batch_size, 64, 5, 32, 32)
         x = self.up3(x2, x)

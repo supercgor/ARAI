@@ -4,6 +4,33 @@ from utils.tools import absp
 
 _C = CN()
 # -----------------------------------------------------------------------------
+# Load settings
+# -----------------------------------------------------------------------------
+_C.path = CN()
+# the root of all file
+_C.path.root = '/home/supercgor/gitfile/'
+# datasets path
+_C.path.data_root = '/home/supercgor/gitfile/data'
+# checkpoints path
+_C.path.check_root = '/home/supercgor/gitfile/data/model'
+# use dataset
+_C.path.dataset = 'bulkice'
+# Train file list
+_C.path.train_filelist = 'train.filelist'
+# Val file list
+_C.path.valid_filelist = 'valid.filelist'
+# Test file list
+_C.path.test_filelist = 'test.filelist'
+# Test file list
+_C.path.pred_filelist = 'pred.filelist'
+# checkpoint name
+_C.path.checkpoint = "3A_ref"
+# Save file dir
+_C.path.save_dir = "None"
+# OVITO
+_C.path.ovito = "None"
+
+# -----------------------------------------------------------------------------
 # Data settings
 # -----------------------------------------------------------------------------
 _C.DATA = CN()
@@ -18,28 +45,11 @@ _C.DATA.ELE_NAME = ('O', 'H')
 # Real box size
 _C.DATA.REAL_SIZE = [25,25,3]
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.DATA.BATCH_SIZE = 4
+_C.DATA.BATCH_SIZE = 2
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.DATA.PIN_MEMORY = True
 # Number of data loading threads
 _C.DATA.NUM_WORKERS = 0
-
-# absp root is utils, so use 2 ..
-_root_path = absp('../../afm_ice_small')
-# Train data path
-_C.DATA.TRAIN_PATH = _root_path
-# Val data path
-_C.DATA.VAL_PATH = _root_path
-# Test data path
-_C.DATA.TEST_PATH = _root_path
-# Train file list
-_C.DATA.TRAIN_FILE_LIST = os.path.join(_root_path, 'train_FileList')
-# Val file list
-_C.DATA.VAL_FILE_LIST = os.path.join(_root_path, 'val_FileList')
-# Test file list
-_C.DATA.TEST_FILE_LIST = os.path.join(_root_path, 'test_FileList')
-# Label path
-_C.DATA.LABEL_PATH = os.path.join(_root_path, 'label')
 
 # -----------------------------------------------------------------------------
 # Model settings
@@ -52,7 +62,7 @@ _C.MODEL.CHANNELS = 32
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 # 0 for using one GPU or list for Parallel device idx 
-_C.TRAIN.DEVICE = [0]
+_C.TRAIN.DEVICE = [0,1]
 # Training epochs
 _C.TRAIN.EPOCHS = 50
 # learning rate
@@ -63,8 +73,6 @@ _C.TRAIN.CLIP_GRAD = 10.0
 _C.TRAIN.MAX_SAVE = 3
 # Show the progress
 _C.TRAIN.SHOW = True
-# Checkpoint path
-_C.TRAIN.CHECKPOINT = "CP49_O0.9790_H0.9175_0.075678.pkl"
 # Criterion
 _C.TRAIN.CRITERION = CN()
 # Factor to increase the loss of positive sample
@@ -78,7 +86,7 @@ _C.TRAIN.CRITERION.WEIGHT_OFFSET_Z = 0.5
 # Reduction of offset
 _C.TRAIN.CRITERION.REDUCTION = 'mean'
 # Enable local loss after epoch
-_C.TRAIN.CRITERION.LOCAL = 2
+_C.TRAIN.CRITERION.LOCAL = 999
 # Decay para
 _C.TRAIN.CRITERION.DECAY = [0.9,0.7,0.5,0.3,0.1,0.05]
 
@@ -90,33 +98,15 @@ _C.OTHER = CN()
 _C.OTHER.THRESHOLD = 0
 # NMS
 _C.OTHER.NMS = True
-# OVITO
-_C.OTHER.PATH_OVITO = r'D:\Software\OVITO Basic'
 # Split space
 _C.OTHER.SPLIT = [0.0,3.0]
-
-# -----------------------------------------------------------------------------
-# Predict settings
-# -----------------------------------------------------------------------------
-_C.PRED = CN()
-# Prediction data root file
-_C.PRED.PATH = "/home/supercgor/gitfile/structural_ml/exp_ice"
-# Prediction file list
-_C.PRED.FILE_LIST = "pre.FileList"
-# Prediction result save file dir
-_C.PRED.SAVE_DIR = "result"
-
 
 # -----------------------------------------------------------------------------
 # Test settings
 # -----------------------------------------------------------------------------
 _C.TEST = CN()
-# Path to save test result
-_C.TEST.SAVE_PATH = r""
 # Show the progress
 _C.TEST.SHOW = True
-# Whether to open OVITO
-_C.TEST.OVITO = False
 # Number of the best and the worst prediction
 _C.TEST.N = 5
 
@@ -132,17 +122,17 @@ def get_config(options = None):
         if options.batch_size is not None:
             cfg.DATA.BATCH_SIZE = options.batch_size
         if options.model is not None:
-            cfg.TRAIN.CHECKPOINT = absp("../checkpoints/" + options.model)
+            cfg.path.checkpoint = options.model
         if options.dataset is not None:
-            cfg.DATA.TRAIN_PATH = absp("../../" + options.dataset)
-            cfg.DATA.VAL_PATH = absp("../../" + options.dataset)
-            cfg.DATA.TEST_PATH = absp("../../" + options.dataset)
-            cfg.DATA.TRAIN_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'train_FileList')
-            cfg.DATA.VAL_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'train_FileList')
-            cfg.DATA.TEST_FILE_LIST = os.path.join(cfg.DATA.TRAIN_PATH, 'train_FileList')
-            cfg.DATA.LABEL_PATH = os.path.join(cfg.DATA.TRAIN_PATH, 'label')
-        if options.log_name is not None:
-            cfg.OTHER.LOG = options.log_name
+            cfg.path.dataset = options.dataset
+        if options.train_filelist is not None:
+            cfg.path.train_filelist = options.train_filelist
+        if options.valid_filelist is not None:
+            cfg.path.valid_filelist = options.valid_filelist
+        if options.test_filelist is not None:
+            cfg.path.test_filelist = options.test_filelist
+        if options.pred_filelist is not None:
+            cfg.path.pred_filelist = options.pred_filelist
         if options.worker is not None:
             cfg.DATA.NUM_WORKERS = options.worker
         if options.gpu is not None:

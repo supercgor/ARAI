@@ -14,6 +14,7 @@ from utils.poscar import generate_target
 def read_pic(path, N=10, all_N=20, img_size=(256, 256),
              transform=False, shift_size=5, c=0.2, rec_size=500, pre=False):
     # add all the transform to the picture
+    all_N = min(all_N, len(os.listdir(path)))
     if pre:
         file_index = np.arange(0, N)
     else:
@@ -59,11 +60,10 @@ def read_pic(path, N=10, all_N=20, img_size=(256, 256),
 
 # build the AFM dataset class for read data and label
 class AFMDataset(Dataset):
-    def __init__(self, root_path, ele_name, file_list, label, img_size, transform, max_Z, Z):
+    def __init__(self, root_path, ele_name, file_list, img_size, transform, max_Z, Z):
         self.root = root_path
         self.ele_name = ele_name
         self.filenames = read_file(os.path.join(root_path,file_list))
-        self.label = label
         self.max_Z = max_Z
         self.Z = Z
         self.transform = transform
@@ -71,9 +71,9 @@ class AFMDataset(Dataset):
 
     def __getitem__(self, index):
         filename = self.filenames[index]
-        data_path = os.path.join(self.root,'data',filename)
+        data_path = os.path.join(self.root,'afm',filename)
         data = read_pic(data_path, N=self.max_Z, img_size=self.img_size, transform=self.transform)
-        poscar_path = os.path.join(self.root,self.label,f"{filename}.poscar")
+        poscar_path = os.path.join(self.root,'label',f"{filename}.poscar")
         info, positions = read_POSCAR(poscar_path)
         target = torch.from_numpy(generate_target(info, positions, self.ele_name, self.Z)).float()
         return data, target, filename, str(poscar_path)
@@ -94,7 +94,7 @@ class AFMPredictDataset(Dataset):
 
     def __getitem__(self, index):
         filename = self.filenames[index]
-        data_path = os.path.join(self.root , "data" , filename)
+        data_path = os.path.join(self.root , "afm" , filename)
         data = read_pic(data_path, N=self.max_Z, img_size=self.img_size, transform=False, pre=True)
         return data, filename
 
@@ -105,10 +105,9 @@ class AFMPredictDataset(Dataset):
 def make_dataset(mode, cfg):
     if mode == "train":
         train_dataset = AFMDataset(
-            cfg.DATA.TRAIN_PATH, 
+            f"{cfg.path.data_root}/{cfg.path.dataset}", 
             cfg.DATA.ELE_NAME, 
-            file_list=cfg.DATA.TRAIN_FILE_LIST,
-            label=cfg.DATA.LABEL_PATH,
+            file_list=cfg.path.train_filelist,
             img_size=cfg.DATA.IMG_SIZE, transform=True, max_Z=cfg.DATA.MAX_Z,
             Z=cfg.DATA.Z)
         
@@ -123,10 +122,9 @@ def make_dataset(mode, cfg):
 
     elif mode == "valid":
         valid_dataset = AFMDataset(
-            cfg.DATA.VAL_PATH, 
+            f"{cfg.path.data_root}/{cfg.path.dataset}", 
             cfg.DATA.ELE_NAME, 
-            file_list=cfg.DATA.VAL_FILE_LIST, 
-            label=cfg.DATA.LABEL_PATH,
+            file_list=cfg.path.valid_filelist,
             img_size=cfg.DATA.IMG_SIZE, 
             transform=True, 
             max_Z=cfg.DATA.MAX_Z,
@@ -142,10 +140,9 @@ def make_dataset(mode, cfg):
     
     elif mode == "test":
         test_dataset = AFMDataset(
-            cfg.DATA.VAL_PATH, 
+            f"{cfg.path.data_root}/{cfg.path.dataset}", 
             cfg.DATA.ELE_NAME, 
-            file_list=cfg.DATA.TEST_FILE_LIST, 
-            label=cfg.DATA.LABEL_PATH,
+            file_list=cfg.path.test_filelist,
             img_size=cfg.DATA.IMG_SIZE, 
             transform=True,
             max_Z=cfg.DATA.MAX_Z,
@@ -161,9 +158,9 @@ def make_dataset(mode, cfg):
     
     elif mode == "predict":
         predict_dataset = AFMPredictDataset(
-            cfg.PRED.PATH, 
+            f"{cfg.path.data_root}/{cfg.path.dataset}", 
             cfg.DATA.ELE_NAME, 
-            file_list=cfg.PRED.FILE_LIST, 
+            file_list=cfg.path.pred_filelist,
             img_size=cfg.DATA.IMG_SIZE, 
             max_Z=cfg.DATA.MAX_Z,
             Z=cfg.DATA.Z)
