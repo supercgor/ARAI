@@ -3,11 +3,11 @@ import time
 import torch
 import numpy as np
 
-from utils.analyze_data import *
-from utils.criterion import Criterion
-from utils.tools import condense
-from utils.dataset import make_dataset
-from utils.loader import Loader
+from .analyze_data import *
+from .criterion import Criterion
+from .tools import condense
+from .dataset import make_dataset
+from .loader import Loader
 
 class Trainer():
     def __init__(self, cfg):
@@ -15,7 +15,7 @@ class Trainer():
         
         self.ml, self.model, self.logger = Loader(cfg)
 
-        self.analyzer = Analyzer(cfg)
+        self.analyzer = Analyzer(cfg).cuda()
         
     def fit(self):
         # --------------------------------------------------
@@ -182,123 +182,6 @@ class Trainer():
                 log_dic[key] = torch.mean(log_dic[key])
                 
         return log_dic
-
-    @torch.no_grad()
-    def test(self):
-        # -------------------------------------------
-        
-        logger = self.logger
-        model = self.model
-        analyzer = self.analyzer
-        cfg = self.cfg
-        criterion = Criterion(cfg,cfg.TRAIN.CRITERION.LOCAL).cuda()
-        test_loader = make_dataset('test', cfg)
-        # save_dir = os.path.join(cfg.PRED.PATH, cfg.PRED.SAVE_DIR)
- 
-        # -------------------------------------------
-
-        logger.info(f'Start testing.')
-        
-        start_time = time.time()
-        
-        model.eval() # 切换模型为预测模式
-        
-        log_dic = {'loss':[], 'count':[]}
-        
-        # -------------------------------------------
-        
-        for i, (inputs, targets, filenames, _) in enumerate(test_loader):
-            
-            if cfg.TRAIN.SHOW:
-                t = time.time()
-                print(f'\r{i}/{len(test_loader)}', end='')
-
-            inputs = inputs.cuda(non_blocking= True)
-            targets = targets.cuda(non_blocking= True)
-            
-            predictions = model(inputs)
-            
-            loss = criterion(predictions, targets)
-
-            info = analyzer(predictions, targets)
-                                    
-            log_dic['count'].append(analyzer.count(info))
-            log_dic['loss'].append(loss)
-            
-            # if i % len(test_loader)//2 == 0:
-            #     analyzer.to_poscar(predictions, filenames, save_dir)
-
-            if cfg.TRAIN.SHOW:
-                print(
-                    f' time: {(time.time() - t):.2f}, loss: {loss.item():.4f}', end='')
-        
-        # -------------------------------------------
-        log_dic = condense(log_dic)
-        
-        for key in log_dic['count'].keys():
-            if key[-3:] in ["ACC", "SUC"]:
-                log_dic['count'][key] = torch.mean(log_dic['count'][key])
-            else:
-                log_dic['count'][key] = torch.sum(log_dic['count'][key])
-        
-        for key in log_dic.keys():
-            if key != "count":
-                log_dic[key] = torch.mean(log_dic[key])
-                
-        logger.test_info(log_dic)
-        
-        # -------------------------------------------
-        # analyzer.rdf.save()
-        
-        logger.info(f"Spend time: {time.time() - start_time:.2f}s")
-        
-        logger.info(f'End testing')
-
-    @torch.no_grad()
-    def predict(self):
-        # -------------------------------------------
-        
-        logger = self.logger
-        model = self.model
-        cfg = self.cfg
-        analyzer = self.analyzer
-        predict_loader = make_dataset('predict', cfg)
-
-        # -------------------------------------------
-
-        logger.info(f'Start prediction.')
-        
-        start_time = time.time()
-
-        model.eval() # 切换模型为预测模式
-        
-        # -------------------------------------------
-        
-        for i, (inputs, filenames) in enumerate(predict_loader):
-            
-            if cfg.TRAIN.SHOW:
-                t = time.time()
-                print(f'\r{i}/{len(predict_loader)}', end='')
-
-            inputs = inputs.cuda(non_blocking= True)
-            
-            predictions = model(inputs)
-            
-            save_dir = os.path.join(cfg.PRED.PATH, cfg.PRED.SAVE_DIR)
-            
-            analyzer.to_poscar(predictions, filenames, save_dir)
-            
-            if cfg.TRAIN.SHOW:
-                print(f' time: {(time.time() - t):.2f}', end='')
-        
-        # -------------------------------------------
-  
-        # analyzer.rdf.save()
-  
-        logger.info(f"Spend time: {time.time() - start_time:.2f}s")
-        
-        logger.info(f'End prediction')
-        
 
     def save(self, epoch, log_dic):
         

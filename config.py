@@ -8,13 +8,13 @@ _C = CN()
 # -----------------------------------------------------------------------------
 _C.path = CN()
 # the root of all file
-_C.path.root = '/home/supercgor/gitfile/'
+_C.path.root = '/home/supercgor/gitfile'
 # datasets path
 _C.path.data_root = '/home/supercgor/gitfile/data'
 # checkpoints path
 _C.path.check_root = '/home/supercgor/gitfile/data/model'
 # use dataset
-_C.path.dataset = 'bulkice'
+_C.path.dataset = 'exp'
 # Train file list
 _C.path.train_filelist = 'train.filelist'
 # Val file list
@@ -24,11 +24,11 @@ _C.path.test_filelist = 'test.filelist'
 # Test file list
 _C.path.pred_filelist = 'pred.filelist'
 # checkpoint name
-_C.path.checkpoint = "3A_ref"
+_C.path.checkpoint = "3A_with_more_data"
 # Save file dir
-_C.path.save_dir = "None"
+_C.path.save_dir = ""
 # OVITO
-_C.path.ovito = "None"
+_C.path.ovito = ""
 
 # -----------------------------------------------------------------------------
 # Data settings
@@ -62,7 +62,7 @@ _C.MODEL.CHANNELS = 32
 # -----------------------------------------------------------------------------
 _C.TRAIN = CN()
 # 0 for using one GPU or list for Parallel device idx 
-_C.TRAIN.DEVICE = [0,1]
+_C.TRAIN.DEVICE = [0]
 # Training epochs
 _C.TRAIN.EPOCHS = 50
 # learning rate
@@ -95,7 +95,7 @@ _C.TRAIN.CRITERION.DECAY = [0.9,0.7,0.5,0.3,0.1,0.05]
 # -----------------------------------------------------------------------------
 _C.OTHER = CN()
 # Threshold
-_C.OTHER.THRESHOLD = 0
+_C.OTHER.THRESHOLD = 0.5
 # NMS
 _C.OTHER.NMS = True
 # Split space

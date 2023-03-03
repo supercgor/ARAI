@@ -223,7 +223,6 @@ class Analyzer(torch.nn.Module):
 
     def to_poscar(self, predictions, filenames, out_dir, nms=True, npy=False):
 
-        rdf = self.rdf
         batch_size = predictions.size(0)
 
         if npy:
@@ -245,7 +244,6 @@ class Analyzer(torch.nn.Module):
                 prediction_nms, ele_P = self.nms(prediction, diameter)
                 ele_P = ele_P / self.real_size
                 _P_pos.append(ele_P)
-            rdf(_P_pos)
             P_pos.append(_P_pos)
 
         for batch in range(batch_size):
