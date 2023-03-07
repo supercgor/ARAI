@@ -12,7 +12,7 @@ def run():
     options, args = parser.parse_args()
     
     # debug
-    options.mode = 'predict'
+    options.mode = 'train'
 
     cfg = get_config(options)
 

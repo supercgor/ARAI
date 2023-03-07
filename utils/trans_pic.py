@@ -55,50 +55,59 @@ def pixel_shift(img, shift):
 # a randomly rectangular place will be cut to zero
 # the h, w of the rec box is the normal distribution of the square root(rec_size)
 # the initial point of rec is uniform, if the rec touch the boundary, the rec wll be cut.
-def cutout(img, rec_size=100):
-    raw_shape = np.array(np.array(img.shape))
-    height, width = raw_shape
-    change_pixel = img.mean()
-    if rec_size > height * width:
-        print("Too Large Cutout Area!")
-        return False
-    y = np.random.randint(0, height, 1)[0]
-    x = np.random.randint(0, width, 1)[0]
-    rec_size = np.random.randint(1, rec_size + 1, 1)[0]
-    c_h = np.sqrt(rec_size)
-    h = int(abs(np.random.normal(c_h, c_h, 1)))  # mean : sqrt, dev: 3sigma
-    h = np.clip(h, 1, rec_size)
-    w = rec_size // h
-    m_y, m_x = np.indices((h, w))
-    m_y = np.clip(m_y + y, 0, height - 1)
-    m_x = np.clip(m_x + x, 0, width - 1)
-    img[m_y, m_x] = change_pixel
+def cutout(img, rec_size=0.01, max_cut=3):
+    height = img.shape[0]
+    width = img.shape[1]
+    for _ in range(np.random.randint(0, max_cut)):
+        change_pixel = img.mean() * abs(np.random.normal(1, 0.2))
+        change_pixel = np.clip(np.int8(change_pixel), 0, 255)
+
+        rec_size = np.random.uniform(0, rec_size)
+        max_size = int(height * width * rec_size)
+
+        new_height = np.clip(abs(np.random.normal(
+            np.sqrt(max_size) * 0.3, np.sqrt(max_size)*0.4)), 1, max_size)
+        new_weight = max_size//new_height
+
+        new_height, new_weight = np.random.choice([new_height, new_weight], 2, replace = False)
+        y = np.random.randint(0, height)
+        x = np.random.randint(0, width)
+        
+        m_y = np.clip(new_height + y, 0, height - 1).astype(int)
+        y = np.clip(y, 0, height - 1)
+        m_x = np.clip(new_weight + x, 0, width - 1).astype(int)
+        x = np.clip(x, 0, width - 1)
+        img[y:m_y, x:m_x] = change_pixel
     return img
 
 
-def add_noise(img, c=0.1):
-    raw_shape = np.array(np.array(img.shape))
-    height = raw_shape[0]
-    width = raw_shape[1]
-    noise = 0.5 * c * (img.max() - img.min())
-    Noise = np.random.uniform(-1 * noise, noise, (height, width))
-    img2 = np.clip(np.add(img, Noise), 0, 255)
-    return img2
+def add_noise(img, max_c=0.1):
+    c = abs(np.random.normal(0, max_c))
+    c = np.clip(c, 0, max_c)
+    noisemode, addmode = np.random.randint(0, [1, 2])
+    if noisemode == 0:
+        noise = np.random.normal(loc=0, scale=1, size=img.shape)
+    elif noisemode == 1:
+        noise = 0.5 * c * (img.max() - img.min())
+        noise = np.random.uniform(-1 * noise, noise, img.shape)
 
-
-def add_normal_noise(img, c=0.1, mode=0):
-    noise = np.random.normal(loc=0, scale=1, size=img.shape)
-    if mode == 0:  # noise overlaid over image
+    if addmode == 0:  # noise overlaid over image
         noisy = np.clip((img + noise * c * 255), 0, 255)
-    elif mode == 1:  # noise multiplied by image
+    elif addmode == 1:  # noise multiplied by image
         noisy = np.clip((img * (1 + noise * c)), 0, 255)
-    elif mode == 2:  # noise multiplied by bottom and top half images
+    elif addmode == 2:  # noise multiplied by bottom and top half images
         img2 = img / 255 * 2
-        noisy = np.clip(np.where(img2 <= 1, (img2 * (1 + noise * c)), (1 - img2 + 1) * (1 + noise * c) * -1 + 2) / 2, 0,
-                        1)
+        noisy = np.clip(np.where(img2 <= 1, (img2 * (1 + noise * c)),
+                        (1 - img2 + 1) * (1 + noise * c) * -1 + 2) / 2, 0, 1)
         noisy = noisy * 255
     return noisy
 
+def reduce_bnc(img, b = 0.2, c = 0.1):
+    contrast = np.clip(c * 255, 0, 255)
+    brightness = np.clip(b * 255, 0, 255)
+    output = img * (contrast/127 + 1) - contrast + brightness
+    output = np.clip(output, 0, 255).astype(np.uint8)
+    return output
 
 if __name__ == '__main__':
     img = np.random.random((128, 128))

@@ -1,6 +1,4 @@
 from yacs.config import CfgNode as CN
-import os
-from utils.tools import absp
 
 _C = CN()
 # -----------------------------------------------------------------------------
@@ -14,7 +12,7 @@ _C.path.data_root = '/home/supercgor/gitfile/data'
 # checkpoints path
 _C.path.check_root = '/home/supercgor/gitfile/data/model'
 # use dataset
-_C.path.dataset = 'exp'
+_C.path.dataset = 'bulkice'
 # Train file list
 _C.path.train_filelist = 'train.filelist'
 # Val file list
@@ -36,8 +34,10 @@ _C.path.ovito = ""
 _C.DATA = CN()
 # Input image size
 _C.DATA.IMG_SIZE = 128
+# Number of different images
+_C.DATA.N = 10
 # Number of input images
-_C.DATA.MAX_Z = 10
+_C.DATA.MAX_Z = 20
 # Out put layers
 _C.DATA.Z = 4
 # Element names
