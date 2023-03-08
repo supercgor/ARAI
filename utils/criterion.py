@@ -7,17 +7,17 @@ class Criterion(nn.Module):
     def __init__(self, cfg, local_epoch = 9999):
         super(Criterion, self).__init__()
         self.cfg = cfg
-        self.ele_name = cfg.DATA.ELE_NAME
+        self.ele_name = cfg.data.elem_name
         self.local_epoch = local_epoch
         # Used to Caculate the absulute position of offset, this tensor fulfilled that t[x,y,z] = [x,y,z], pit refers to position index tensor
-        reduction = cfg.TRAIN.CRITERION.REDUCTION
-        pos_weight = torch.tensor(cfg.TRAIN.CRITERION.POS_WEIGHT, dtype=torch.float32)
+        reduction = cfg.criterion.reduction
+        pos_weight = torch.tensor(cfg.criterion.pos_weight, dtype=torch.float32)
         
-        self.weight_confidence = cfg.TRAIN.CRITERION.WEIGHT_CONFIDENCE
-        self.weight_offset_xy = cfg.TRAIN.CRITERION.WEIGHT_OFFSET_XY
-        self.weight_offset_z = cfg.TRAIN.CRITERION.WEIGHT_OFFSET_Z
+        self.weight_confidence = cfg.criterion.weight_confidence
+        self.weight_offset_xy = cfg.criterion.weight_offset_xy
+        self.weight_offset_z = cfg.criterion.weight_offset_z
 
-        self.register_buffer('decay_paras', torch.tensor(cfg.TRAIN.CRITERION.DECAY))
+        self.register_buffer('decay_paras', torch.tensor(cfg.criterion.decay))
         self.loss_confidence = nn.BCEWithLogitsLoss(reduction=reduction,
                                                              pos_weight=pos_weight)
         self.loss_offset_xy = nn.MSELoss(reduction=reduction)

@@ -7,20 +7,20 @@ import numpy as np
 
 from torch.utils.data.dataset import Dataset
 from utils.trans_pic import *
-from utils.basic import read_POSCAR, read_file
+from utils.tools import read_POSCAR, read_file
 from utils.poscar import generate_target
 
 
 def read_pic(path: str, 
-             N: int | None = 10,
-             out_N: int = 20,
+             img_use: int | None = 10,
+             model_inp_img: int = 20,
              split_layer: bool = True,
              split_border = [0,6,12],
              img_size: tuple | None = None,
              transform: bool = False, 
              shift_size: int = 5, 
              c: float = 0.04, 
-             rec_size: float = 0.1, 
+             rec_size: float = 0.04, 
              pre: bool = False) -> torch.Tensor:
     """Read .png or .jpg files from folder and return a torch tensor and it is unitized and has size ( N, Height, Width).
 
@@ -45,27 +45,27 @@ def read_pic(path: str,
     """
     # add all the transform to the picture
     all_N = len(os.listdir(path))
-    if N is not None:
-        if N > all_N:
-            raise ValueError(f"Use too many images, there are only {all_N} but use {N}")
+    if img_use is not None:
+        if img_use > all_N:
+            raise ValueError(f"Use too many images, there are only {all_N} but use {img_use}")
     else:
-        N = all_N    
+        img_use = all_N    
     
     if pre:
         # 把所有圖片都用了，不夠就隨機copy，直到夠20張為止
         use = np.arange(0, all_N)
-        if all_N < out_N:
-            use = np.concatenate([use, np.random.choice(use, out_N - all_N)])
+        if all_N < model_inp_img:
+            use = np.concatenate([use, np.random.choice(use, model_inp_img - all_N)])
         use = np.sort(use)
         
     if split_layer:
-        NL = np.around(N * 0.4).astype(int)
-        NM = np.around(N * 0.3).astype(int)
-        NH = N - NL - NM
+        NL = np.around(img_use * 0.4).astype(int)
+        NM = np.around(img_use * 0.3).astype(int)
+        NH = img_use - NL - NM
         
-        outNL = np.around(out_N * 0.4).astype(int)
-        outNM = np.around(out_N * 0.3).astype(int)
-        outNH = out_N - outNL - outNM
+        outNL = np.around(model_inp_img * 0.4).astype(int)
+        outNM = np.around(model_inp_img * 0.3).astype(int)
+        outNH = model_inp_img - outNL - outNM
         
         useL = list(range(split_border[0], split_border[1]))
         useM = list(range(split_border[1], split_border[2]))
@@ -85,10 +85,10 @@ def read_pic(path: str,
         use = np.sort(np.concatenate([useL, useM, useH]))
         
     else:
-        low = max(all_N // N - 1, 1)  # minimum of intervals
-        n = np.random.randint(0, min(all_N - low * N, N - 1) + 1)  # the number of intervals to increase
-        intervals = np.full(N - 1, low, dtype=np.int32)
-        indices = np.random.choice(np.arange(N - 1), n, replace=False)  # indices of intervals to increase
+        low = max(all_N // img_use - 1, 1)  # minimum of intervals
+        n = np.random.randint(0, min(all_N - low * img_use, img_use - 1) + 1)  # the number of intervals to increase
+        intervals = np.full(img_use - 1, low, dtype=np.int32)
+        indices = np.random.choice(np.arange(img_use - 1), n, replace=False)  # indices of intervals to increase
         for i in indices:
             intervals[i] += 1
         start = np.random.randint(0, all_N - np.sum(intervals))
@@ -125,23 +125,27 @@ def read_pic(path: str,
 
 # build the AFM dataset class for read data and label
 class AFMDataset(Dataset):
-    def __init__(self, root_path, ele_name, file_list, img_size, transform, N ,max_Z, Z):
+    def __init__(self, root_path, ele_name, file_list, img_size, transform, img_use ,model_inp_img, model_out):
         self.root = root_path
         self.ele_name = ele_name
         self.filenames = read_file(os.path.join(root_path,file_list))
-        self.max_Z = max_Z
-        self.N = N
-        self.Z = Z
+        self.model_inp_img = model_inp_img
+        self.img_use = img_use
+        self.model_out = model_out
         self.transform = transform
         self.img_size = (img_size, img_size)
 
     def __getitem__(self, index):
         filename = self.filenames[index]
         data_path = os.path.join(self.root,'afm',filename)
-        data = read_pic(data_path, N = self.N, img_size=self.img_size, transform=self.transform, out_N=10)
+        data = read_pic(data_path, 
+                        img_use = self.img_use, 
+                        img_size=self.img_size, 
+                        transform=self.transform, 
+                        model_inp_img=self.model_inp_img)
         poscar_path = os.path.join(self.root,'label',f"{filename}.poscar")
         info, positions = read_POSCAR(poscar_path)
-        target = torch.from_numpy(generate_target(info, positions, self.ele_name, self.Z)).float()
+        target = torch.from_numpy(generate_target(info, positions, self.ele_name, self.model_out)).float()
         return data, target, filename, str(poscar_path)
 
     def __len__(self):
@@ -150,18 +154,24 @@ class AFMDataset(Dataset):
 
 # build the AFM dataset class without label for prediction only
 class AFMPredictDataset(Dataset):
-    def __init__(self, root_path, ele_name, file_list, img_size, max_Z, Z):
+    def __init__(self, root_path, ele_name, file_list, img_size, model_inp_img, model_out):
         self.root = root_path
         self.ele_name = ele_name
         self.filenames = read_file(os.path.join(root_path,file_list))
-        self.max_Z = max_Z
-        self.Z = Z
+        self.model_inp_img = model_inp_img
+        self.img_use = None
+        self.model_out = model_out
         self.img_size = (img_size, img_size)
 
     def __getitem__(self, index):
         filename = self.filenames[index]
         data_path = os.path.join(self.root , "afm" , filename)
-        data = read_pic(data_path, N=self.max_Z, img_size=self.img_size, transform=False, pre=True)
+        data = read_pic(data_path, 
+                        img_use=self.img_use, 
+                        model_inp_img=self.model_inp_img, 
+                        img_size=self.img_size, 
+                        transform=False, 
+                        pre=True)
         return data, filename
 
     def __len__(self):
@@ -171,71 +181,78 @@ class AFMPredictDataset(Dataset):
 def make_dataset(mode, cfg):
     if mode == "train":
         train_dataset = AFMDataset(
-            f"{cfg.path.data_root}/{cfg.path.dataset}", 
-            cfg.DATA.ELE_NAME, 
-            file_list=cfg.path.train_filelist,
-            img_size=cfg.DATA.IMG_SIZE, transform=True, max_Z=cfg.DATA.MAX_Z, N = cfg.DATA.N,
-            Z=cfg.DATA.Z)
+            f"{cfg.path.data_root}/{cfg.data.dataset}", 
+            cfg.data.elem_name, 
+            file_list=cfg.data.train_filelist,
+            img_size=cfg.data.img_size, 
+            transform=True, 
+            model_inp_img=cfg.model.input, 
+            img_use = cfg.data.img_use,
+            model_out=cfg.model.output)
         
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
-            batch_size=cfg.DATA.BATCH_SIZE,
-            num_workers=cfg.DATA.NUM_WORKERS,
-            pin_memory=cfg.DATA.PIN_MEMORY,
+            batch_size=cfg.setting.batch_size,
+            num_workers=cfg.setting.num_workers,
+            pin_memory=cfg.setting.pin_memory,
             shuffle = True)
         
         return train_loader
 
     elif mode == "valid":
         valid_dataset = AFMDataset(
-            f"{cfg.path.data_root}/{cfg.path.dataset}", 
-            cfg.DATA.ELE_NAME, 
-            file_list=cfg.path.valid_filelist,
-            img_size=cfg.DATA.IMG_SIZE, 
+            f"{cfg.path.data_root}/{cfg.data.dataset}", 
+            cfg.data.elem_name, 
+            file_list=cfg.data.valid_filelist,
+            img_size=cfg.data.img_size, 
             transform=True, 
-            max_Z=cfg.DATA.MAX_Z, N = cfg.DATA.N,
-            Z=cfg.DATA.Z)
+            model_inp_img=cfg.model.input, 
+            img_use = cfg.data.img_use,
+            model_out=cfg.model.output)
 
         val_loader = torch.utils.data.DataLoader(
             valid_dataset,
-            batch_size=cfg.DATA.BATCH_SIZE,
-            num_workers=cfg.DATA.NUM_WORKERS,
-            pin_memory=cfg.DATA.PIN_MEMORY)
+            batch_size=cfg.setting.batch_size,
+            num_workers=cfg.setting.num_workers,
+            pin_memory=cfg.setting.pin_memory)
     
         return val_loader
     
     elif mode == "test":
         test_dataset = AFMDataset(
-            f"{cfg.path.data_root}/{cfg.path.dataset}", 
-            cfg.DATA.ELE_NAME, 
-            file_list=cfg.path.test_filelist,
-            img_size=cfg.DATA.IMG_SIZE, 
-            transform=True,
-            max_Z=cfg.DATA.MAX_Z,
-            Z=cfg.DATA.Z)
+            f"{cfg.path.data_root}/{cfg.data.dataset}", 
+            cfg.data.elem_name, 
+            file_list=cfg.data.test_filelist,
+            img_size=cfg.data.img_size, 
+            transform=True, 
+            model_inp_img=cfg.model.input, 
+            img_use = cfg.data.img_use,
+            model_out=cfg.model.output)
 
         test_loader = torch.utils.data.DataLoader(
             test_dataset,
-            batch_size=cfg.DATA.BATCH_SIZE,
-            num_workers=cfg.DATA.NUM_WORKERS,
-            pin_memory=cfg.DATA.PIN_MEMORY)
+            batch_size=cfg.setting.batch_size,
+            num_workers=cfg.setting.num_workers,
+            pin_memory=cfg.setting.pin_memory)
 
         return test_loader
     
     elif mode == "predict":
         predict_dataset = AFMPredictDataset(
-            f"{cfg.path.data_root}/{cfg.path.dataset}", 
-            cfg.DATA.ELE_NAME, 
-            file_list=cfg.path.pred_filelist,
-            img_size=cfg.DATA.IMG_SIZE, 
-            max_Z=cfg.DATA.MAX_Z,
-            Z=cfg.DATA.Z)
+            f"{cfg.path.data_root}/{cfg.data.dataset}", 
+            cfg.data.elem_name,
+            file_list=cfg.data.pred_filelist,
+            img_size=cfg.data.img_size, 
+            transform=False, 
+            model_inp_img=cfg.model.input, 
+            img_use = None,
+            model_out=cfg.model.output)
 
         predict_loader = torch.utils.data.DataLoader(
             predict_dataset,
             batch_size=1,
-            num_workers=cfg.DATA.NUM_WORKERS,
-            pin_memory=cfg.DATA.PIN_MEMORY)
+            num_workers=cfg.setting.num_workers,
+            pin_memory=cfg.setting.pin_memory)
 
         return predict_loader
     else:

@@ -67,7 +67,8 @@ def cutout(img, rec_size=0.01, max_cut=3):
 
         new_height = np.clip(abs(np.random.normal(
             np.sqrt(max_size) * 0.3, np.sqrt(max_size)*0.4)), 1, max_size)
-        new_weight = max_size//new_height
+        new_height = max(1, new_height)
+        new_weight = max_size/new_height
 
         new_height, new_weight = np.random.choice([new_height, new_weight], 2, replace = False)
         y = np.random.randint(0, height)

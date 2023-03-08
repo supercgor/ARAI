@@ -1,4 +1,4 @@
-from utils.tools import Parser
+from utils.tools import Parser, set_seed
 from config import get_config
 from utils.train import Trainer
 from utils.test import Test
@@ -9,26 +9,23 @@ from utils.pred import Pred
 def run():
     
     parser = Parser()
-    options, args = parser.parse_args()
-    
+    options, _ = parser.parse_args()
     # debug
-    options.mode = 'train'
-
-    cfg = get_config(options)
-
+    mode = "train"
+    cfg = get_config(vars(options))
     
-    
-    if options.mode == 'train':
+    if mode == 'train':
         trainer = Trainer(cfg)
         trainer.fit()
-    elif options.mode == 'test':
+    elif mode == 'test':
         trainer = Test(cfg)
         trainer.test()
-    elif options.mode == 'predict':
+    elif mode == 'predict':
         trainer = Pred(cfg)
         trainer.predict()
     
 if __name__ == '__main__':
+    set_seed(1)
     run()
 
 #test

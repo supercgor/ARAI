@@ -1,6 +1,5 @@
 import os
 import torch
-from utils.const import LOG_DIR, DATE
 from numpy import pi
 
 
@@ -11,25 +10,23 @@ class Analyzer(torch.nn.Module):
         self.cfg = cfg
 
         # some initialization
-        self.elem = cfg.DATA.ELE_NAME
+        self.elem = cfg.data.elem_name
         self.elem_num = len(self.elem)
         self.ele_diameter = [0.740 * 1.4, 0.528 * 1.4]
 
-        self.space_size = [cfg.MODEL.CHANNELS, cfg.MODEL.CHANNELS, cfg.DATA.Z]
+        self.space_size = [cfg.model.channels, cfg.model.channels, cfg.model.output]
         self.output_shape = self.space_size + [self.elem_num, 4]
-        self.split = cfg.OTHER.SPLIT
+        self.split = cfg.setting.split
 
-        self.register_buffer('real_size', torch.tensor(cfg.DATA.REAL_SIZE))
+        self.register_buffer('real_size', torch.tensor(cfg.data.real_size))
 
         self.register_buffer(
             'lattice_expand', self.real_size/torch.tensor(self.space_size))
 
-        self.do_nms = cfg.OTHER.NMS
+        self.do_nms = cfg.model.nms
 
-        self.P_threshold = cfg.OTHER.THRESHOLD
+        self.P_threshold = cfg.model.threshold
         self.T_threshold = 0.5
-
-        self.rdf = RDF(cfg)
 
         # Construct the pit-tensor
         # Used to Caculate the absulute position of offset, this tensor fulfilled that t[x,y,z] = [x,y,z], pit refers to position index tensor
@@ -228,7 +225,7 @@ class Analyzer(torch.nn.Module):
         if npy:
             for batch in range(batch_size):
                 filename = filenames[batch]
-                file_path = os.path.join(out_dir, self.cfg.TRAIN.CHECKPOINT.split(
+                file_path = os.path.join(out_dir, self.cfg.model.checkpoint.split(
                     "/")[-1][:-4], filename + '.npy')
                 torch.save(predictions[batch], file_path)
 
@@ -279,7 +276,7 @@ class RDF(torch.nn.Module):
         self.cfg = cfg
 
         # some initialization
-        self.elem = cfg.DATA.ELE_NAME
+        self.elem = cfg.data.elem_name
 
         self.stop = stop
 
@@ -287,7 +284,7 @@ class RDF(torch.nn.Module):
 
         self.total = int(stop * self.inver_delta)
 
-        self.register_buffer('real_size', torch.tensor(cfg.DATA.REAL_SIZE))
+        self.register_buffer('real_size', torch.tensor(cfg.data.real_size))
         self.register_buffer(
             'vol', self.real_size[0] * self.real_size[1] * self.real_size[2])
         self.register_buffer('slice_vol', torch.arange(
@@ -322,8 +319,10 @@ class RDF(torch.nn.Module):
         self.number += 1
 
     def save(self):
-        self.count = self.count / self.number
-        path = os.path.join(LOG_DIR, f'{DATE}-RDF.npy')
-        torch.save(self.count, path)
-        self.count.zero_()
-        self.number.zero_()
+        pass
+        #TODO
+        # self.count = self.count / self.number
+        # path = os.path.join(LOG_DIR, f'{DATE}-RDF.npy')
+        # torch.save(self.count, path)
+        # self.count.zero_()
+        # self.number.zero_()

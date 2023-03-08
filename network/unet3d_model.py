@@ -2,7 +2,6 @@ import torch.autograd
 
 from network.unet_part import *
 
-
 class UNet3D(nn.Module):
     def __init__(self, n_channels, channels, output_z):
         super(UNet3D, self).__init__()
@@ -65,9 +64,9 @@ class UNet3D(nn.Module):
         return match_list
 
 
-class TransUnet3D(nn.Module):
+class TransUNet3D(nn.Module):
     def __init__(self, n_channels, channels, output_z):
-        super(TransUnet3D, self).__init__()
+        super(transUNet3D, self).__init__()
         self.output_z = output_z
         self.inc = DoubleConv(in_channels=n_channels, out_channels=channels, encoder=True)
         self.down1 = Down(channels, 2 * channels, all_dim=0)
@@ -127,6 +126,12 @@ class TransUnet3D(nn.Module):
                 break
         self.load_state_dict(state_dict)
         return match_list
+
+model = {
+    "UNet3D": UNet3D,
+    "TransUNet3D": TransUNet3D
+}
+
 
 if __name__ == "__main__":
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
