@@ -1,6 +1,4 @@
-from yacs.config import CfgNode as CN
-import os
-from utils.tools import absp
+from utils.tools import CfgNode as CN
 
 _C = CN()
 # -----------------------------------------------------------------------------
@@ -13,135 +11,110 @@ _C.path.root = '/home/supercgor/gitfile'
 _C.path.data_root = '/home/supercgor/gitfile/data'
 # checkpoints path
 _C.path.check_root = '/home/supercgor/gitfile/data/model'
-# use dataset
-_C.path.dataset = 'exp'
-# Train file list
-_C.path.train_filelist = 'train.filelist'
-# Val file list
-_C.path.valid_filelist = 'valid.filelist'
-# Test file list
-_C.path.test_filelist = 'test.filelist'
-# Test file list
-_C.path.pred_filelist = 'pred.filelist'
-# checkpoint name
-_C.path.checkpoint = "3A_with_more_data"
 # Save file dir
 _C.path.save_dir = ""
 # OVITO
 _C.path.ovito = ""
 
 # -----------------------------------------------------------------------------
-# Data settings
+# Default settings
 # -----------------------------------------------------------------------------
-_C.DATA = CN()
-# Input image size
-_C.DATA.IMG_SIZE = 128
-# Number of input images
-_C.DATA.MAX_Z = 10
-# Out put layers
-_C.DATA.Z = 4
-# Element names
-_C.DATA.ELE_NAME = ('O', 'H')
-# Real box size
-_C.DATA.REAL_SIZE = [25,25,3]
+_C.setting = CN()
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.DATA.BATCH_SIZE = 2
+_C.setting.batch_size = 2
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
-_C.DATA.PIN_MEMORY = True
+_C.setting.pin_memory = True
 # Number of data loading threads
-_C.DATA.NUM_WORKERS = 0
+_C.setting.num_workers = 0
+# 0 for using one GPU or list for Parallel device idx 
+_C.setting.device = [0]
+# Training epochs
+_C.setting.epochs = 50
+# Enable local loss after epoch
+_C.setting.local_epoch = 999
+# learning rate
+_C.setting.learning_rate = 1e-4
+# Clip gradient norm
+_C.setting.clip_grad = 10.0
+# Max number of models to save
+_C.setting.max_save = 3
+# Show the progress
+_C.setting.show = True
+# Split space
+_C.setting.split = [0.0,3.0]
 
 # -----------------------------------------------------------------------------
 # Model settings
 # -----------------------------------------------------------------------------
-_C.MODEL = CN()
-_C.MODEL.CHANNELS = 32
-
-# -----------------------------------------------------------------------------
-# Training settings
-# -----------------------------------------------------------------------------
-_C.TRAIN = CN()
-# 0 for using one GPU or list for Parallel device idx 
-_C.TRAIN.DEVICE = [0]
-# Training epochs
-_C.TRAIN.EPOCHS = 50
-# learning rate
-_C.TRAIN.LR = 1e-4
-# Clip gradient norm
-_C.TRAIN.CLIP_GRAD = 10.0
-# Max number of models to save
-_C.TRAIN.MAX_SAVE = 3
-# Show the progress
-_C.TRAIN.SHOW = True
-# Criterion
-_C.TRAIN.CRITERION = CN()
-# Factor to increase the loss of positive sample
-_C.TRAIN.CRITERION.POS_WEIGHT = (5.0, 5.0)
-# Weight of confidence
-_C.TRAIN.CRITERION.WEIGHT_CONFIDENCE = 1.0
-# Weight of offset in x-axis and y-axis
-_C.TRAIN.CRITERION.WEIGHT_OFFSET_XY = 0.5
-# Weight of offset in z-axis
-_C.TRAIN.CRITERION.WEIGHT_OFFSET_Z = 0.5
-# Reduction of offset
-_C.TRAIN.CRITERION.REDUCTION = 'mean'
-# Enable local loss after epoch
-_C.TRAIN.CRITERION.LOCAL = 999
-# Decay para
-_C.TRAIN.CRITERION.DECAY = [0.9,0.7,0.5,0.3,0.1,0.05]
-
-# -----------------------------------------------------------------------------
-# Other settings
-# -----------------------------------------------------------------------------
-_C.OTHER = CN()
+_C.model = CN()
+# checkpoint name
+_C.model.checkpoint = "3A_with_more_data"
+# use net
+_C.model.net = "UNet3D"
+# the init channels number
+_C.model.channels = 32
+# Number of input images
+_C.model.input = 20
+# out put layers
+_C.model.output = 4
 # Threshold
-_C.OTHER.THRESHOLD = 0.5
+_C.model.threshold = 0.5
 # NMS
-_C.OTHER.NMS = True
-# Split space
-_C.OTHER.SPLIT = [0.0,3.0]
+_C.model.nms = True
 
 # -----------------------------------------------------------------------------
-# Test settings
+# Data settings
 # -----------------------------------------------------------------------------
-_C.TEST = CN()
-# Show the progress
-_C.TEST.SHOW = True
-# Number of the best and the worst prediction
-_C.TEST.N = 5
+_C.data = CN()
+# use dataset
+_C.data.dataset = 'bulkice'
+# Input image size
+_C.data.img_size = 128
+# Number of different images
+_C.data.img_use = 10
+# Element names
+_C.data.elem_name = ('O', 'H')
+# Real box size
+_C.data.real_size = [25,25,3]
+# file list
+_C.data.train_filelist = 'train.filelist'
+_C.data.valid_filelist = 'valid.filelist'
+_C.data.test_filelist = 'test.filelist'
+_C.data.pred_filelist = 'pred.filelist'
+
+# -----------------------------------------------------------------------------
+# Criterion settings
+# -----------------------------------------------------------------------------
+# Criterion
+_C.criterion = CN()
+# Factor to increase the loss of positive sample
+_C.criterion.pos_weight = (5.0, 5.0)
+# Weight of confidence
+_C.criterion.weight_confidence = 1.0
+# Weight of offset in x-axis and y-axis
+_C.criterion.weight_offset_xy = 0.5
+# Weight of offset in z-axis
+_C.criterion.weight_offset_z = 0.5
+# Reduction of offset
+_C.criterion.reduction = 'mean'
+# Decay para
+_C.criterion.decay = [0.9,0.7,0.5,0.3,0.1,0.05]
+
+# -----------------------------------------------------------------------------
+# Don't fill any thing here, this part is automatically filled
+# -----------------------------------------------------------------------------
+_C.model.best = ""
+_C.setting.tag = ""
 
 _C.freeze()
 
-def get_config(options = None):
+
+def get_config(options = {}):
     """Get a yacs CfgNode object with default values."""
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
     cfg = _C.clone()
     cfg.defrost()
-    if options is not None:
-        if options.batch_size is not None:
-            cfg.DATA.BATCH_SIZE = options.batch_size
-        if options.model is not None:
-            cfg.path.checkpoint = options.model
-        if options.dataset is not None:
-            cfg.path.dataset = options.dataset
-        if options.train_filelist is not None:
-            cfg.path.train_filelist = options.train_filelist
-        if options.valid_filelist is not None:
-            cfg.path.valid_filelist = options.valid_filelist
-        if options.test_filelist is not None:
-            cfg.path.test_filelist = options.test_filelist
-        if options.pred_filelist is not None:
-            cfg.path.pred_filelist = options.pred_filelist
-        if options.worker is not None:
-            cfg.DATA.NUM_WORKERS = options.worker
-        if options.gpu is not None:
-            gpu = list(map(int,options.gpu.split(",")))
-            cfg.TRAIN.DEVICE = gpu
-        if options.local_epoch is not None:
-            cfg.TRAIN.CRITERION.LOCAL = options.local_epoch
-        if options.epoch is not None:
-            cfg.TRAIN.EPOCH = options.epoch
-
-    cfg.freeze()
+    cfg.merge_from_dict(options)
+    
     return cfg

@@ -13,7 +13,7 @@ class Trainer():
     def __init__(self, cfg):
         self.cfg = cfg
         
-        self.ml, self.model, self.logger = Loader(cfg)
+        self.ml, self.model, self.logger, self.tb_writer = Loader(cfg)
 
         self.analyzer = Analyzer(cfg).cuda()
         
@@ -23,13 +23,14 @@ class Trainer():
         
         cfg = self.cfg
         logger = self.logger
+        tbw = self.tb_writer
         
         self.train_loader = make_dataset('train', cfg)
         self.valid_loader = make_dataset('valid', cfg)
 
-        self.criterion = Criterion(cfg,cfg.TRAIN.CRITERION.LOCAL).cuda()
+        self.criterion = Criterion(cfg,cfg.setting.local_epoch).cuda()
 
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.cfg.TRAIN.LR)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg.setting.learning_rate)
 
         self.best_ACC = [0.0,0.0]
         
@@ -38,7 +39,7 @@ class Trainer():
         # --------------------------------------------------
         logger.info(f'Start training.')
 
-        for epoch in range(1, cfg.TRAIN.EPOCHS + 1):
+        for epoch in range(1, cfg.setting.epochs + 1):
             epoch_start_time = time.time()
 
             log_train_dic = self.train(epoch)
@@ -49,7 +50,14 @@ class Trainer():
                 log_valid_dic = {}
             
             logger.epoch_info(epoch,log_train_dic,log_valid_dic)
-            
+            for key in ['loss', 'grad']:
+                tbw.add_scalar(f"epoch.train.{key}", log_train_dic[key], epoch)
+            for key in log_train_dic['count']:
+                tbw.add_scalar(f"epoch.train.{key}", log_train_dic['count'][key], epoch)
+            for key in ['loss']:
+                tbw.add_scalar(f"epoch.valid.{key}", log_valid_dic[key], epoch)
+            for key in log_valid_dic['count']:
+                tbw.add_scalar(f"epoch.valid.{key}", log_valid_dic['count'][key], epoch)
             # ---------------------------------------------
             # Saver here
             
@@ -71,6 +79,7 @@ class Trainer():
         analyzer = self.analyzer
         optimizer = self.optimizer
         cfg = self.cfg
+        tbw = self.tb_writer
 
         # -------------------------------------------
 
@@ -79,7 +88,7 @@ class Trainer():
         
         for i, (inputs, targets, filename, _) in enumerate(self.train_loader):
             
-            if cfg.TRAIN.SHOW:
+            if cfg.setting.show:
                 t = time.time()
                 print(f'\r{i}/{len(self.train_loader)}', end='')
 
@@ -99,7 +108,7 @@ class Trainer():
             
             loss.backward()
 
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.TRAIN.CLIP_GRAD, error_if_nonfinite=True)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.setting.clip_grad, error_if_nonfinite=True)
             
             optimizer.step()
 
@@ -109,7 +118,10 @@ class Trainer():
             log_dic['loss'].append(loss)
             log_dic['grad'].append(grad_norm)
 
-            if cfg.TRAIN.SHOW:
+            for key in ['loss', 'grad']:
+                tbw.add_scalar(f"step.train.{key}", log_dic[key][-1], epoch)
+            
+            if cfg.setting.show:
                 print(
                     f' time: {(time.time() - t):.2f}, loss: {loss.item():.4f}', end='')
         
@@ -136,6 +148,7 @@ class Trainer():
         analyzer = self.analyzer
         criterion = self.criterion
         cfg = self.cfg
+        tbw = self.tb_writer
 
         # -------------------------------------------
 
@@ -144,7 +157,7 @@ class Trainer():
         
         for i, (inputs, targets, _, _) in enumerate(self.valid_loader):
             
-            if cfg.TRAIN.SHOW:
+            if cfg.setting.show:
                 t = time.time()
                 print(f'\r{i}/{len(self.valid_loader)}', end='')
 
@@ -164,7 +177,10 @@ class Trainer():
             log_dic['count'].append(analyzer.count(info))
             log_dic['loss'].append(loss)
 
-            if cfg.TRAIN.SHOW:
+            for key in ['loss']:
+                tbw.add_scalar(f"step.train.{key}", log_dic[key][-1], epoch)
+            
+            if cfg.setting.show:
                 print(
                     f' time: {(time.time() - t):.2f}, loss: {loss.item():.4f}', end='')
         
@@ -190,8 +206,8 @@ class Trainer():
         log_loss = log_dic['loss']
         model = self.model
         logger = self.logger
-        elem = cfg.DATA.ELE_NAME
-        split = cfg.OTHER.SPLIT
+        elem = cfg.data.elem_name
+        split = cfg.setting.split
         split = [f"{split[i]}-{split[i+1]}" for i in range(len(split)-1)]
 
         # -------------------------------------------
@@ -217,7 +233,8 @@ class Trainer():
             model_name += "_".join([f"{ele}{ACC.item():.4f}" for ele, ACC in zip(elem, ele_ACC)])
             model_name += f"_{self.best_LOSS:.6f}.pkl"
             
-            self.ml.save(model_name)
+            self.ml.save_model(model_name)
+            self.ml.save_info(cfg)
             
             logger.info(f"Saved a new model: {model_name}")
         else:

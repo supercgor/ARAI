@@ -3,8 +3,7 @@ import torch
 import os
 from pathlib import Path
 
-from utils.basic import read_POSCAR, read_file
-from utils.NMS import nms
+from utils.tools import read_POSCAR, read_file
 
 class poscar():
     def __init__(self):
@@ -59,104 +58,6 @@ def generate_target(info, positions, ele_name, N):
                 raise Exception
         targets[..., 4 * i: 4 * (i + 1)] = target
     return targets
-
-
-def target2positions(target, info, ele_name, threshold=0, NMS=False):
-    positions = {}
-    for i, ele in enumerate(ele_name):
-        target_ele = target[..., 4 * i: 4 * (i + 1)]
-        offset = target_ele[..., :3]
-        confidence = target_ele[..., 3]
-        grid = np.indices(offset.shape[:3]).transpose((1, 2, 3, 0)).astype(offset.dtype)
-        position = (grid + offset) / np.asarray(confidence.shape).astype(offset.dtype)
-        position = np.concatenate((position, np.expand_dims(confidence, axis=3)), axis=3)
-        position = position[confidence > threshold]
-        if NMS:
-            position = nms(position, ele, info)
-        positions[ele] = position
-    return positions
-
-
-# TODO:有问题
-def target2positions_O(target, info, ele_name, threshold=0, NMS=False):
-    bond_range = (0.8, 1.2)
-    positions = {}
-    for i, ele in enumerate(ele_name):
-        if ele != 'O':
-            continue
-        target_ele = target[..., 4 * i: 4 * (i + 1)]
-        offset = target_ele[..., :3]
-        confidence = target_ele[..., 3]
-        grid = np.indices(offset.shape[:3]).transpose((1, 2, 3, 0)).astype(offset.dtype)
-        position = (grid + offset) / np.asarray(confidence.shape).astype(offset.dtype)
-        position = np.concatenate((position, np.expand_dims(confidence, axis=3)), axis=3)
-        position = position[confidence > threshold]
-        if NMS:
-            position = nms(position, ele, info)
-        positions[ele] = position
-    for i, ele in enumerate(ele_name):
-        if ele != 'H':
-            continue
-        target_ele = target[..., 4 * i: 4 * (i + 1)]
-        offset = target_ele[..., :3]
-        confidence = target_ele[..., 3]
-        grid = np.indices(offset.shape[:3]).transpose((1, 2, 3, 0)).astype(offset.dtype)
-        position = (grid + offset) / np.asarray(confidence.shape).astype(offset.dtype)
-        position = np.concatenate((position, np.expand_dims(confidence, axis=3)), axis=3)
-        position = position[confidence > -3]
-        if NMS:
-            position = nms(position, ele, info)
-        H_list = []
-        for pos_O in positions['O']:
-            distance = np.sqrt(np.sum(np.square((pos_O[None, :3] - position[:, :3]).dot(info['lattice'])), axis=1))
-            mask = (distance > 0.8) & (distance < 1.2)
-            position_H = position[mask]
-            position_H = sorted(position_H, key=lambda x: x[-1], reverse=True)
-            for pos_H in position_H[:2]:
-                H_list.append(pos_H)
-        positions[ele] = np.array(H_list)
-    return positions
-
-
-def calc_count(targets: dict, positions: dict, info, split):
-    ele2r = {'H': 0.528, 'O': 0.74}
-    ele2count = {}
-    for ele in positions:
-        target = targets[ele].dot(info['lattice'])
-        position = positions[ele][..., :3].dot(info['lattice'])
-        distance_array = np.sqrt(np.sum(np.square(np.expand_dims(target, axis=1) - np.expand_dims(position, axis=0)), axis=2))
-        TP = [0 for _ in range(len(split))]
-        distance = []
-        while distance_array.shape[0] > 0 and distance_array.shape[1] > 0:
-            index = np.unravel_index(np.argmin(distance_array), distance_array.shape)
-            if distance_array[index] > ele2r[ele]:
-                break
-            distance.append(distance_array[index])
-            # 移除配对的两个原子
-            distance_array = np.delete(distance_array, index[0], axis=0)
-            distance_array = np.delete(distance_array, index[1], axis=1)
-            # 判断配对的原子在上层还是下层
-            x, y, z = target[index[0]]
-            target = np.delete(target, index[0], axis=0)
-            position = np.delete(position, index[1], axis=0)
-            for i in range(len(split)):
-                low = sum(split) - sum(split[:i + 1])
-                high = sum(split) - sum(split[:i])
-                if low <= z <= high:
-                    TP[i] += 1
-                    break
-            else:
-                raise 'Split Error'
-        FP = []
-        FN = []
-        for i in range(len(split)):
-            low = sum(split) - sum(split[:i + 1])
-            high = sum(split) - sum(split[:i])
-            FP.append(np.sum((low <= position[:, 2]) & (position[:, 2] <= high)))
-            FN.append(np.sum((low <= target[:, 2]) & (target[:, 2] <= high)))
-        ele2count[ele] = ((TP, FP, FN), np.mean(distance) if distance else 0.0)
-    return ele2count
-
 
 def positions2poscar(positions, info, path_prediction):
     with open(path_prediction, 'w') as file:
