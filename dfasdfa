@@ -1,0 +1,26 @@
+[33me9c900c[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{0}: checkout: moving from new_data_arg to master
+[33m32e0552[m[33m ([m[1;32mnew_data_arg[m[33m)[m HEAD@{1}: reset: moving to HEAD@{9}
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{2}: reset: moving to HEAD@{7}
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{3}: reset: moving to HEAD@{6}
+[33mafdce2b[m[33m ([m[1;31morigin/new_data_arg[m[33m)[m HEAD@{4}: checkout: moving from local_pc to new_data_arg
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{5}: checkout: moving from master to local_pc
+[33me9c900c[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{6}: checkout: moving from local_pc to master
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{7}: checkout: moving from master to local_pc
+[33me9c900c[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{8}: checkout: moving from new_data_arg to master
+[33mafdce2b[m[33m ([m[1;31morigin/new_data_arg[m[33m)[m HEAD@{9}: checkout: moving from local_pc to new_data_arg
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{10}: checkout: moving from 32e0552b21957a54fb3d25527a64595667861193 to local_pc
+[33m32e0552[m[33m ([m[1;32mnew_data_arg[m[33m)[m HEAD@{11}: commit: 代碼結構大幅重寫
+[33mafdce2b[m[33m ([m[1;31morigin/new_data_arg[m[33m)[m HEAD@{12}: checkout: moving from new_data_arg to afdce2b3ae9f8f6ae245f2f0193294d7c04389b9
+[33mafdce2b[m[33m ([m[1;31morigin/new_data_arg[m[33m)[m HEAD@{13}: checkout: moving from afdce2b3ae9f8f6ae245f2f0193294d7c04389b9 to new_data_arg
+[33mafdce2b[m[33m ([m[1;31morigin/new_data_arg[m[33m)[m HEAD@{14}: checkout: moving from df96ac79b2d6befc82afebf3994726614d213eba to afdce2b3ae9f8f6ae245f2f0193294d7c04389b9
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{15}: checkout: moving from local_pc to df96ac79b2d6befc82afebf3994726614d213eba
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{16}: checkout: moving from new_data_arg to local_pc
+[33mafdce2b[m[33m ([m[1;31morigin/new_data_arg[m[33m)[m HEAD@{17}: checkout: moving from local_pc to new_data_arg
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{18}: checkout: moving from new_data_arg to local_pc
+[33mafdce2b[m[33m ([m[1;31morigin/new_data_arg[m[33m)[m HEAD@{19}: commit: try
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{20}: checkout: moving from local_pc to new_data_arg
+[33mdf96ac7[m[33m ([m[1;31morigin/local_pc[m[33m, [m[1;32mlocal_pc[m[33m)[m HEAD@{21}: commit: update
+[33m2f1a6d4[m HEAD@{22}: commit: update
+[33m6bd3ede[m HEAD@{23}: checkout: moving from master to local_pc
+[33m6bd3ede[m HEAD@{24}: pull --ff --recurse-submodules --progress origin: Fast-forward
+[33mcd2b77e[m HEAD@{25}: clone: from https://github.com/supercgor/afm_go.git
