@@ -9,9 +9,9 @@ class Pred():
     def __init__(self, cfg):
         self.cfg = cfg
         
-        self.ml, self.model, self.logger = Loader(cfg)
+        self.ml, self.model, self.logger, self.tb_writer = Loader(cfg, make_dir = False)
 
-        self.pl = poscarLoader(f"{cfg.path.data_root}/{cfg.path.dataset}", model_name = cfg.path.checkpoint, lattice=cfg.DATA.REAL_SIZE, elem=cfg.DATA.ELE_NAME)
+        self.pl = poscarLoader(f"{cfg.path.data_root}/{cfg.data.dataset}", model_name = cfg.model.checkpoint, lattice=cfg.data.real_size, elem=cfg.data.elem_name)
 
         self.analyzer = Analyzer(cfg).cuda()
 
@@ -36,7 +36,7 @@ class Pred():
         
         for i, (inputs, filenames) in enumerate(predict_loader):
             
-            if cfg.TRAIN.SHOW:
+            if cfg.setting.show:
                 t = time.time()
                 print(f'\r{i}/{len(predict_loader)}', end='')
 
@@ -46,11 +46,11 @@ class Pred():
             
             for filename, x in zip(filenames, predictions):
                 self.pl.save4npy(f"{filename}.poscar", x, conf = 0)
-                if not os.path.exists(f"{cfg.path.data_root}/{cfg.path.dataset}/npy/{cfg.path.checkpoint}"):
-                    os.mkdir(f"{cfg.path.data_root}/{cfg.path.dataset}/npy/{cfg.path.checkpoint}")
-                torch.save(x.cpu().numpy(), f"{cfg.path.data_root}/{cfg.path.dataset}/npy/{cfg.path.checkpoint}/{filename}.npy")
+                if not os.path.exists(f"{cfg.path.data_root}/{cfg.data.dataset}/npy/{cfg.model.checkpoint}"):
+                    os.mkdir(f"{cfg.path.data_root}/{cfg.data.dataset}/npy/{cfg.model.checkpoint}")
+                torch.save(x.cpu().numpy(), f"{cfg.path.data_root}/{cfg.data.dataset}/npy/{cfg.model.checkpoint}/{filename}.npy")
                 
-            if cfg.TRAIN.SHOW:
+            if cfg.setting.show:
                 print("Finish!")
 
         # -------------------------------------------

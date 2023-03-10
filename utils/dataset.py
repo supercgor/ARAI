@@ -47,7 +47,7 @@ def read_pic(path: str,
     all_N = len(os.listdir(path))
     if img_use is not None:
         if img_use > all_N:
-            raise ValueError(f"Use too many images, there are only {all_N} but use {img_use}")
+            pass# raise ValueError(f"Use too many images, there are only {all_N} but use {img_use}")
     else:
         img_use = all_N    
     
@@ -55,10 +55,12 @@ def read_pic(path: str,
         # 把所有圖片都用了，不夠就隨機copy，直到夠20張為止
         use = np.arange(0, all_N)
         if all_N < model_inp_img:
-            use = np.concatenate([use, np.random.choice(use, model_inp_img - all_N)])
+            use = np.concatenate([use, np.random.choice(use, model_inp_img - all_N, replace = False)])
+        else:
+            use = np.random.choice(use, model_inp_img, replace = False)
         use = np.sort(use)
         
-    if split_layer:
+    elif split_layer:
         NL = np.around(img_use * 0.4).astype(int)
         NM = np.around(img_use * 0.3).astype(int)
         NH = img_use - NL - NM
@@ -154,12 +156,12 @@ class AFMDataset(Dataset):
 
 # build the AFM dataset class without label for prediction only
 class AFMPredictDataset(Dataset):
-    def __init__(self, root_path, ele_name, file_list, img_size, model_inp_img, model_out):
+    def __init__(self, root_path, ele_name, file_list, img_size, model_inp_img, img_use, model_out):
         self.root = root_path
         self.ele_name = ele_name
         self.filenames = read_file(os.path.join(root_path,file_list))
         self.model_inp_img = model_inp_img
-        self.img_use = None
+        self.img_use = img_use
         self.model_out = model_out
         self.img_size = (img_size, img_size)
 
@@ -171,6 +173,7 @@ class AFMPredictDataset(Dataset):
                         model_inp_img=self.model_inp_img, 
                         img_size=self.img_size, 
                         transform=False, 
+                        split_layer = False,
                         pre=True)
         return data, filename
 
@@ -243,9 +246,8 @@ def make_dataset(mode, cfg):
             cfg.data.elem_name,
             file_list=cfg.data.pred_filelist,
             img_size=cfg.data.img_size, 
-            transform=False, 
             model_inp_img=cfg.model.input, 
-            img_use = None,
+            img_use = cfg.data.img_use,
             model_out=cfg.model.output)
 
         predict_loader = torch.utils.data.DataLoader(
