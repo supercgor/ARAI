@@ -5,97 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
-
-
-def conv3d(in_channels, out_channels, kernel_size, bias, padding):
-    return nn.Conv3d(in_channels, out_channels, kernel_size, padding=padding, padding_mode='replicate', bias=bias)
-
-
-def create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding):
-    """
-    Create a list of modules with together constitute a single conv layer with non-linearity
-    and optional batchnorm/groupnorm.
-    Args:
-        in_channels (int): number of input channels
-        out_channels (int): number of output channels
-        kernel_size(int or tuple): size of the convolving kernel
-        order (string): order of things, e.g.
-            'cr' -> conv + ReLU
-            'gcr' -> groupnorm + conv + ReLU
-            'cl' -> conv + LeakyReLU
-            'ce' -> conv + ELU
-            'bcr' -> batchnorm + conv + ReLU
-        num_groups (int): number of groups for the GroupNorm
-        padding (int or tuple): add replicate-padding added to all three sides of the input
-    Return:
-        list of tuple (name, module)
-    """
-    assert 'c' in order, "Conv layer MUST be present"
-    assert order[0] not in 'rle', 'Non-linearity cannot be the first operation in the layer'
-
-    modules = []
-    for i, char in enumerate(order):
-        if char == 'r':
-            modules.append(('ReLU', nn.ReLU(inplace=True)))
-        elif char == 'l':
-            modules.append(('LeakyReLU', nn.LeakyReLU(inplace=True)))
-        elif char == 'e':
-            modules.append(('ELU', nn.ELU(inplace=True)))
-        elif char == 'c':
-            # add learnable bias only in the absence of batchnorm/groupnorm
-            bias = not ('g' in order or 'b' in order)
-            modules.append(
-                ('conv', conv3d(in_channels, out_channels, kernel_size, bias, padding=padding)))
-        elif char == 'g':
-            is_before_conv = i < order.index('c')
-            if is_before_conv:
-                num_channels = in_channels
-            else:
-                num_channels = out_channels
-
-            # use only one group if the given number of groups is greater than the number of channels
-            if num_channels < num_groups:
-                num_groups = 1
-
-            assert num_channels % num_groups == 0, f'Expected number of channels in input to be divisible by num_groups. num_channels={num_channels}, num_groups={num_groups}'
-            modules.append(('groupnorm', nn.GroupNorm(
-                num_groups=num_groups, num_channels=num_channels)))
-        elif char == 'b':
-            is_before_conv = i < order.index('c')
-            if is_before_conv:
-                modules.append(('batchnorm', nn.BatchNorm3d(in_channels)))
-            else:
-                modules.append(('batchnorm', nn.BatchNorm3d(out_channels)))
-        else:
-            raise ValueError(
-                f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c']")
-
-    return modules
-
-
-class SingleConv(nn.Sequential):
-    """
-    Basic convolutional module consisting of a Conv3d, non-linearity and optional batchnorm/groupnorm. The order
-    of operations can be specified via the `order` parameter
-    Args:
-        in_channels (int): number of input channels
-        out_channels (int): number of output channels
-        kernel_size (int or tuple): size of the convolving kernel
-        order (string): determines the order of layers, e.g.
-            'cr' -> conv + ReLU
-            'crg' -> conv + ReLU + groupnorm
-            'cl' -> conv + LeakyReLU
-            'ce' -> conv + ELU
-        num_groups (int): number of groups for the GroupNorm
-        padding (int or tuple):
-    """
-
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='gcl', num_groups=8, padding=1):
-        super(SingleConv, self).__init__()
-
-        for name, module in create_conv(in_channels, out_channels, kernel_size, order, num_groups, padding=padding):
-            self.add_module(name, module)
-
+from .basic import SingleConv, conv3d
 
 class OutConv(nn.Sequential):
     """
@@ -109,11 +19,11 @@ class OutConv(nn.Sequential):
         conv2_in_channels, conv2_out_channels = conv1_out_channels, out_channels
         # conv1
         self.add_module('SingleConv1',
-                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, order, num_groups,
+                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size = kernel_size, order = order, num_groups = num_groups,
                                    padding=padding))
         # conv2
         self.add_module('SingleConv2',
-                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups,
+                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size = kernel_size, order = order, num_groups = num_groups,
                                    padding=padding))
 
 
@@ -139,7 +49,7 @@ class DoubleConv(nn.Sequential):
         padding (int or tuple): add replicate-padding added to all three sides of the input
     """
 
-    def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='gcl', num_groups=8, padding=1):
+    def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='gcl', num_groups=8, padding = 1):
         super(DoubleConv, self).__init__()
         if encoder:
             # we're in the encoder path
@@ -155,11 +65,19 @@ class DoubleConv(nn.Sequential):
 
         # conv1
         self.add_module('SingleConv1',
-                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size, order, num_groups,
+                        SingleConv(in_channels = conv1_in_channels, 
+                                   out_channels = conv1_out_channels, 
+                                   kernel_size = kernel_size, 
+                                   order = order, 
+                                   num_groups = num_groups,
                                    padding=padding))
         # conv2
         self.add_module('SingleConv2',
-                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups,
+                        SingleConv(in_channels = conv2_in_channels, 
+                                   out_channels = conv2_out_channels, 
+                                   kernel_size = kernel_size, 
+                                   order = order, 
+                                   num_groups = num_groups,
                                    padding=padding))
 
 
@@ -355,7 +273,7 @@ class Embeddings(nn.Module):
     """Construct the embeddings from patch, position embeddings.
     """
 
-    def __init__(self, in_channels=256, out_channels=128):
+    def __init__(self, in_channels=256, out_channels=128, img_size = (2,8,8)):
         super(Embeddings, self).__init__()
 
         self.patch_embeddings = conv3d(in_channels=in_channels,
@@ -363,13 +281,13 @@ class Embeddings(nn.Module):
                                        kernel_size=1,
                                        bias=False,
                                        padding=0)
-
-        self.position_embeddings = nn.Parameter(torch.zeros(128, out_channels))
+        self.position_embeddings = nn.Parameter(torch.zeros(img_size[0] * img_size[1] * img_size[2], out_channels))
 
         self.dropout = Dropout(0.1)
 
     def forward(self, x):
         # (B, hidden. n_patches^(1/2), n_patches^(1/2))
+        # 20 img ver -> 320
         x = self.patch_embeddings(x)
         x = x.flatten(2)
         x = x.transpose(-1, -2)
@@ -415,45 +333,6 @@ class Block(nn.Module):
         x = self.ffn(x)
         x = x + h
         return x
-
-    def load_from(self, weights, n_block):
-        pass
-        # ROOT = f"Transformer/encoderblock_{n_block}"
-        # with torch.no_grad():
-        #     query_weight = np2th(weights[pjoin(ROOT, ATTENTION_Q, "kernel")]).view(self.hidden_size, self.hidden_size).t()
-        #     key_weight = np2th(weights[pjoin(ROOT, ATTENTION_K, "kernel")]).view(self.hidden_size, self.hidden_size).t()
-        #     value_weight = np2th(weights[pjoin(ROOT, ATTENTION_V, "kernel")]).view(self.hidden_size, self.hidden_size).t()
-        #     out_weight = np2th(weights[pjoin(ROOT, ATTENTION_OUT, "kernel")]).view(self.hidden_size, self.hidden_size).t()
-
-        #     query_bias = np2th(weights[pjoin(ROOT, ATTENTION_Q, "bias")]).view(-1)
-        #     key_bias = np2th(weights[pjoin(ROOT, ATTENTION_K, "bias")]).view(-1)
-        #     value_bias = np2th(weights[pjoin(ROOT, ATTENTION_V, "bias")]).view(-1)
-        #     out_bias = np2th(weights[pjoin(ROOT, ATTENTION_OUT, "bias")]).view(-1)
-
-        #     self.attn.query.weight.copy_(query_weight)
-        #     self.attn.key.weight.copy_(key_weight)
-        #     self.attn.value.weight.copy_(value_weight)
-        #     self.attn.out.weight.copy_(out_weight)
-        #     self.attn.query.bias.copy_(query_bias)
-        #     self.attn.key.bias.copy_(key_bias)
-        #     self.attn.value.bias.copy_(value_bias)
-        #     self.attn.out.bias.copy_(out_bias)
-
-        #     mlp_weight_0 = np2th(weights[pjoin(ROOT, FC_0, "kernel")]).t()
-        #     mlp_weight_1 = np2th(weights[pjoin(ROOT, FC_1, "kernel")]).t()
-        #     mlp_bias_0 = np2th(weights[pjoin(ROOT, FC_0, "bias")]).t()
-        #     mlp_bias_1 = np2th(weights[pjoin(ROOT, FC_1, "bias")]).t()
-
-        #     self.ffn.fc1.weight.copy_(mlp_weight_0)
-        #     self.ffn.fc2.weight.copy_(mlp_weight_1)
-        #     self.ffn.fc1.bias.copy_(mlp_bias_0)
-        #     self.ffn.fc2.bias.copy_(mlp_bias_1)
-
-        #     self.attention_norm.weight.copy_(np2th(weights[pjoin(ROOT, ATTENTION_NORM, "scale")]))
-        #     self.attention_norm.bias.copy_(np2th(weights[pjoin(ROOT, ATTENTION_NORM, "bias")]))
-        #     self.ffn_norm.weight.copy_(np2th(weights[pjoin(ROOT, MLP_NORM, "scale")]))
-        #     self.ffn_norm.bias.copy_(np2th(weights[pjoin(ROOT, MLP_NORM, "bias")]))
-
 
 class Mlp(nn.Module):
     def __init__(self, in_channels, mid_channels=1024, dropout=0.1):
@@ -528,9 +407,9 @@ class Attention(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, in_channels=128, out_channels=256, img_size=(2, 8, 8)):
+    def __init__(self, in_channels=128, out_channels=256, img_size=(5, 8, 8)):
         super().__init__()
-        self.conv_more = SingleConv(in_channels, out_channels)
+        self.conv_more = SingleConv(in_channels, out_channels, kernel_size = 3, padding= 1, num_groups = 8, order = "crb")
         self.img_size = img_size
 
     def forward(self, x):
@@ -543,10 +422,10 @@ class Decoder(nn.Module):
 
 
 class ViT(nn.Module):
-    def __init__(self, in_channels=256, out_channels=256, img_size=(2, 8, 8), hidden_channels=128, MLP_channels=1024, trans_dropout=0.1, attn_dropout=0, trans_layer = 6,vis=False):
+    def __init__(self, in_channels=256, out_channels=256, img_size=(5, 8, 8), hidden_channels=128, MLP_channels=1024, trans_dropout=0.1, attn_dropout=0, trans_layer = 6,vis=False):
         super().__init__()
         self.embeddings = Embeddings(
-            in_channels=in_channels, out_channels=hidden_channels)
+            in_channels=in_channels, out_channels=hidden_channels, img_size=img_size)
         self.encoder = Encoder(hidden_channels, MLP_channels=MLP_channels,
                                MLP_dropout=trans_dropout, attn_dropout=attn_dropout, trans_layer=trans_layer)
         self.decoder = Decoder(in_channels= hidden_channels, out_channels= out_channels, img_size=img_size)
@@ -560,42 +439,8 @@ class ViT(nn.Module):
     def load_state_dict(self, state_dict, strict: bool = True):
         return super().load_state_dict(state_dict, strict)
 
-
-def model_structure(model):
-    blank = ' '
-    print('-' * 90)
-    print('|' + ' ' * 11 + 'weight name' + ' ' * 10 + '|'
-          + ' ' * 15 + 'weight shape' + ' ' * 15 + '|'
-          + ' ' * 3 + 'number' + ' ' * 3 + '|')
-    print('-' * 90)
-    num_para = 0
-    type_size = 1  # 如果是浮点数就是4
-
-    for index, (key, w_variable) in enumerate(model.named_parameters()):
-        if len(key) <= 30:
-            key = key + (30 - len(key)) * blank
-        shape = str(w_variable.shape)
-        if len(shape) <= 40:
-            shape = shape + (40 - len(shape)) * blank
-        each_para = 1
-        for k in w_variable.shape:
-            each_para *= k
-        num_para += each_para
-        str_num = str(each_para)
-        if len(str_num) <= 10:
-            str_num = str_num + (10 - len(str_num)) * blank
-
-        print('| {} | {} | {} |'.format(key, shape, str_num))
-    print('-' * 90)
-    print('The total number of parameters: ' + str(num_para))
-    print('The parameters of Model {}: {:4f}M' .format(
-        model._get_name(), num_para * type_size / 1000 / 1000))
-    print('-' * 90)
-
-
 if __name__ == "__main__":
-    inp = torch.empty((2, 256, 2, 8, 8), dtype=torch.float32)
+    inp = torch.empty((2, 256, 5, 8, 8), dtype=torch.float32)
     model = ViT()
     out = model(inp)
     print(out.shape)
-    model_structure(model)

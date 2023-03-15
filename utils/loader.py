@@ -9,12 +9,11 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 from torch import nn
 from collections import OrderedDict
-from network.unet3d_model import model
+from network import model
 from .tools import model_structure, fill_dict
 from collections import OrderedDict
 
-
-def Loader(cfg, make_dir=True, log_name="train.log", cuda=True, show_para = False):
+def Loader(cfg, make_dir=True):
     # 這一部份會決定是否先產生一個新的文件夾
     load_name = cfg.model.checkpoint
     if load_name != "":
@@ -25,67 +24,110 @@ def Loader(cfg, make_dir=True, log_name="train.log", cuda=True, show_para = Fals
     else:
         f = open(f"{cfg.path.check_root}/default_info.json")
     
+    info_dict = json.load(f)
+    f.close()
+    
     if make_dir:
         i = 0
         while True:
             name = f"{cfg.model.net}-{time.strftime('%m%d-%H')}-{i}"
-            if os.path.exists(f"{cfg.path.check_root}/{name}"):
+            if info_dict['best'] != "" and os.path.exists(f"{cfg.path.check_root}/{name}"):
                 i += 1
             else:
-                os.mkdir(f"{cfg.path.check_root}/{name}")
+                if not os.path.exists(f"{cfg.path.check_root}/{name}"):
+                    os.mkdir(f"{cfg.path.check_root}/{name}")
                 break
     else:
         name = load_name
-        
-    info_dict = json.load(f)
-    f.close()
+
     cfg.merge_from_dict(info_dict)
-
-    # logger的相關設定
-    
-    logger = Logger(f"{cfg.path.check_root}/{name}", 
-                    log_name=log_name,
-                    elem=cfg.data.elem_name, 
-                    split=cfg.setting.split)
-    
-    # 讀取model
-    ml = modelLoader(path = f"{cfg.path.check_root}/{name}", 
-                     keeps= cfg.setting.max_save)
-    
-    log = ml.load(path = f"{cfg.path.check_root}/{load_name}",
-            best = cfg.model.best,
-            net = cfg.model.net, 
-            input = cfg.model.input, 
-            output = cfg.model.output, 
-            channels = cfg.model.channels)
-
-    logger.info(log)
-    
-    # Tensorboard 初始化
-    os.mkdir(f"{cfg.path.check_root}/{name}/tb_log")
-    writer = SummaryWriter(log_dir = f"{cfg.path.check_root}/{name}/tb_log",
-                           comment= name)
-    
-    # 是否顯示模型的參數
-    if show_para:
-        model_structure(ml.model)
-
-    # 是否使用GPU
-
-    if cuda:
-        if len(cfg.setting.device) > 1:
-            parallel = True
-        else:
-            parallel = False
-
-        ml.cuda(parallel=parallel)
-
-    # 將 info.json 烤貝一份到新的目錄
 
     with open(f"{cfg.path.check_root}/{name}/info.json", "w") as f:
         json.dump(info_dict, f, indent = 4)
+    
+    if not os.path.exists(f"{cfg.path.check_root}/{name}/tb_log"):
+        os.mkdir(f"{cfg.path.check_root}/{name}/tb_log")
+    
+    load_dir = f"{cfg.path.check_root}/{load_name}"
+    work_dir = f"{cfg.path.check_root}/{name}"
         
-    return ml, ml.model, logger, writer
+    return load_dir, work_dir
+
+# def Loader(cfg, make_dir=True, log_name="train.log", cuda=True, show_para = False):
+#     # 這一部份會決定是否先產生一個新的文件夾
+#     load_name = cfg.model.checkpoint
+#     if load_name != "":
+#         if os.path.exists(f"{cfg.path.check_root}/{load_name}"):
+#             f = open(f"{cfg.path.check_root}/{load_name}/info.json")
+#         else:
+#             raise NameError(f"No model in {cfg.path.check_root} is called {load_name}")
+#     else:
+#         f = open(f"{cfg.path.check_root}/default_info.json")
+    
+#     info_dict = json.load(f)
+#     f.close()
+#     if make_dir:
+#         i = 0
+#         while True:
+#             name = f"{cfg.model.net}-{time.strftime('%m%d-%H')}-{i}"
+#             if info_dict['best'] != "" and os.path.exists(f"{cfg.path.check_root}/{name}"):
+#                 i += 1
+#             else:
+#                 if not os.path.exists(f"{cfg.path.check_root}/{name}"):
+#                     os.mkdir(f"{cfg.path.check_root}/{name}")
+#                 break
+#     else:
+#         name = load_name
+
+#     cfg.merge_from_dict(info_dict)
+
+#     # logger的相關設定
+    
+#     logger = Logger(f"{cfg.path.check_root}/{name}", 
+#                     log_name=log_name,
+#                     elem=cfg.data.elem_name, 
+#                     split=cfg.setting.split)
+    
+#     # 讀取model
+#     ml = modelLoader(path = f"{cfg.path.check_root}/{name}", 
+#                      keeps= cfg.setting.max_save)
+    
+#     log = ml.load(path = f"{cfg.path.check_root}/{load_name}",
+#             best = cfg.model.best,
+#             net = cfg.model.net,
+#             inp_size = cfg.model.inp_size, 
+#             out_size = cfg.model.out_size, 
+#             hidden_channels = cfg.model.channels)
+
+#     logger.info(log)
+    
+#     # Tensorboard 初始化
+#     if not os.path.exists(f"{cfg.path.check_root}/{name}/tb_log"):
+#         os.mkdir(f"{cfg.path.check_root}/{name}/tb_log")
+#     writer = SummaryWriter(log_dir = f"{cfg.path.check_root}/{name}/tb_log/{i}",
+#                            comment= name,
+#                            filename_suffix = str(i))
+    
+#     # 是否顯示模型的參數
+#     if show_para:
+#         model_structure(ml.model)
+
+#     # 是否使用GPU
+
+#     if cuda:
+#         if len(cfg.setting.device) > 1:
+#             parallel = True
+#         else:
+#             parallel = False
+
+#         ml.cuda(parallel=parallel)
+
+#     # 將 info.json 烤貝一份到新的目錄
+
+#     with open(f"{cfg.path.check_root}/{name}/info.json", "w") as f:
+#         json.dump(info_dict, f, indent = 4)
+        
+#     return ml, ml.model, logger, writer
 
 
 class modelLoader():
@@ -97,11 +139,19 @@ class modelLoader():
         self.parallel = False
         # check
 
-    def load(self, path = "/home/supercgor/gitfile/data/model/3A_ref", best = "", net = "UNet3D", input = 20, output = 4, channels = 32):
-        self._model = model[net](1, channels, output)
+    def load(self, path = "/home/supercgor/gitfile/data/model/3A_ref", 
+             net = "UNet3D", 
+             best = "",
+             cuda = False, 
+             **kwargs):
+        if net in ["UNet3D", "TransUNet3D"]:
+            self._model = model[net](img_channels = 1, 
+                                    **kwargs)
+        else:
+            self._model = model[net](**kwargs)
         if best == "":
             self._model.weight_init()
-            info = f"No model is loaded, start a new model"
+            info = f"No model is loaded, start a new model: {net}"
         else:
             model_weight = torch.load(f"{path}/{best}")
             try:
@@ -110,19 +160,24 @@ class modelLoader():
             except RuntimeError:
                 match_list = self._model.load_pretrained_layer(model_weight)
                 info = f"Different model! Load match layers: {match_list}"
+        
+        if cuda:
+            self.cuda(parallel = True)
+            
         return info
 
-    def cuda(self, parallel=False):
+    def cuda(self, parallel=True):
+        if parallel:
+            if len(os.environ["CUDA_VISIBLE_DEVICES"]) > 1:
+                parallel = True
+            else:
+                parallel = False
         self.parallel = parallel
         self._model = self._model.cuda()
         if parallel:
             device_ids = list(
                 map(int, os.environ["CUDA_VISIBLE_DEVICES"].split(",")))
             self._model = nn.DataParallel(self._model, device_ids=device_ids)
-
-    @property
-    def model(self):
-        return self._model
 
     def save_info(self, cfg):
         f = open(f"{self.path}/info.json")
@@ -137,7 +192,8 @@ class modelLoader():
         if len(self.keeps_name) == self.keeps:
             # model save num == threshold, delete the oldest one and save new model
             # delete the oldest model
-            os.remove(self.keeps_name.pop(0))
+            rm_name = self.keeps_name.pop(0)
+            os.remove(f"{self.path}/{rm_name}")
 
         # save new model
         state_dict = self._model.state_dict()
@@ -145,8 +201,15 @@ class modelLoader():
             state_dict = self._Parallel2Single(state_dict)
         torch.save(state_dict, f"{self.path}/{name}")
         self.best = name
-        self.keeps_name.append(f"{self.path}/{name}")
+        self.keeps_name.append(f"{name}")
 
+    @property
+    def model(self):
+        return self._model
+
+    def __call__(self, *args, **kwargs):
+        return self._model(*args, **kwargs)
+    
     @staticmethod
     def _Parallel2Single(state_dict):
         """
@@ -424,3 +487,18 @@ def cdist(mata: np.ndarray, matb: np.ndarray, diag=None):
     if matb.ndim == 1:
         out = out[..., 0]
     return out
+
+def _clean(line, splitter=' '):
+    """
+    clean the one line by splitter
+    all the data need to do format convert
+    ""splitter:: splitter in the line
+    """
+    data0 = []
+    line = line.strip().replace('\t', ' ').replace('\x00', '')
+    list2 = line.split(splitter)
+    for i in list2:
+        if i != '':
+            data0.append(i)
+    temp = np.array(data0)
+    return temp

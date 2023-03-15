@@ -10,6 +10,21 @@ import numpy as np
 from optparse import OptionParser
 from utils import __version__, __date__
 from yacs.config import CfgNode as CN
+from torch.autograd import Function
+
+class ReverseLayerF(Function):
+
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        output = grad_output.neg() * ctx.alpha
+
+        return output, None
 
 
 def set_seed(seed):
@@ -62,7 +77,6 @@ def mkdir(path):
 
 def absp(*paths):
     return os.path.normpath(os.path.abspath(os.path.join(os.path.dirname(__file__), *paths)))
-
 
 def condense(dic):
     output = {}
@@ -138,23 +152,26 @@ def read_POSCAR(file_name):
             'ele_name': tuple(ele_name)}
     return info, positions
 
+
 class CfgNode(CN):
     def __init__(self):
         super(CfgNode, self).__init__()
-    
+
     def merge_from_dict(self, dic):
         for key in self:
             for sub_key in self[key]:
-                if sub_key in dic and dic[sub_key] is not None:
-                    self.merge_from_list([f"{key}.{sub_key}", f"{dic[sub_key]}"])
-    
-    
+                if sub_key in dic and dic[sub_key] is not None and dic[sub_key] != "":
+                    self.merge_from_list(
+                        [f"{key}.{sub_key}", f"{dic[sub_key]}"])
+
+
 def fill_dict(dic, cfg: CfgNode):
     for key in cfg:
         for sub_key in cfg[key]:
-            if sub_key in dic:
+            if sub_key in dic and dic[sub_key] is not None and dic[sub_key] != "":
                 dic[sub_key] = cfg[key][sub_key]
     return dic
+
 
 def Parser():
 

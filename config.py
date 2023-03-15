@@ -21,12 +21,12 @@ _C.path.ovito = ""
 # -----------------------------------------------------------------------------
 _C.setting = CN()
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.setting.batch_size = 2
+_C.setting.batch_size = 4
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.setting.pin_memory = True
 # Number of data loading threads
 _C.setting.num_workers = 0
-# 0 for using one GPU or list for Parallel device idx 
+# 0 for using one GPU or list for Parallel device idx
 _C.setting.device = [0]
 # Training epochs
 _C.setting.epochs = 50
@@ -41,22 +41,21 @@ _C.setting.max_save = 3
 # Show the progress
 _C.setting.show = True
 # Split space
-_C.setting.split = [0.0,3.0]
+_C.setting.split = [0.0, 3.0]
 
 # -----------------------------------------------------------------------------
 # Model settings
 # -----------------------------------------------------------------------------
 _C.model = CN()
 # checkpoint name
-_C.model.checkpoint = "3A_with_more_data"
+_C.model.checkpoint = ""
 # use net
-_C.model.net = "UNet3D"
+_C.model.net = "TransUNet3D"
 # the init channels number
 _C.model.channels = 32
-# Number of input images
-_C.model.input = 20
-# out put layers
-_C.model.output = 4
+# the size of input and output. (Z, X, Y)
+_C.model.inp_size = (10, 128, 128)
+_C.model.out_size = (4, 32, 32)
 # Threshold
 _C.model.threshold = 0.5
 # NMS
@@ -68,14 +67,12 @@ _C.model.nms = True
 _C.data = CN()
 # use dataset
 _C.data.dataset = 'bulkice'
-# Input image size
-_C.data.img_size = 128
-# Number of different images
+# How many images will be used
 _C.data.img_use = 10
 # Element names
 _C.data.elem_name = ('O', 'H')
-# Real box size
-_C.data.real_size = [25,25,3]
+# Real box size (Z, X, Y)
+_C.data.real_size = [3, 25, 25]
 # file list
 _C.data.train_filelist = 'train.filelist'
 _C.data.valid_filelist = 'valid.filelist'
@@ -98,7 +95,7 @@ _C.criterion.weight_offset_z = 0.5
 # Reduction of offset
 _C.criterion.reduction = 'mean'
 # Decay para
-_C.criterion.decay = [0.9,0.7,0.5,0.3,0.1,0.05]
+_C.criterion.decay = [0.9, 0.7, 0.5, 0.3, 0.1, 0.05]
 
 # -----------------------------------------------------------------------------
 # Don't fill any thing here, this part is automatically filled
@@ -109,12 +106,12 @@ _C.setting.tag = ""
 _C.freeze()
 
 
-def get_config(options = {}):
+def get_config(options={}):
     """Get a yacs CfgNode object with default values."""
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
     cfg = _C.clone()
     cfg.defrost()
     cfg.merge_from_dict(options)
-    
+
     return cfg

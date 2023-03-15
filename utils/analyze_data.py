@@ -14,14 +14,14 @@ class Analyzer(torch.nn.Module):
         self.elem_num = len(self.elem)
         self.ele_diameter = [0.740 * 1.4, 0.528 * 1.4]
 
-        self.space_size = [cfg.model.channels, cfg.model.channels, cfg.model.output]
-        self.output_shape = self.space_size + [self.elem_num, 4]
+        self.out_size = cfg.model.out_size[::-1]
+        self.output_shape = self.out_size + (self.elem_num, 4)
         self.split = cfg.setting.split
 
-        self.register_buffer('real_size', torch.tensor(cfg.data.real_size))
+        self.register_buffer('real_size', torch.tensor(cfg.data.real_size[::-1]))
 
         self.register_buffer(
-            'lattice_expand', self.real_size/torch.tensor(self.space_size))
+            'lattice_expand', self.real_size/torch.tensor(self.out_size))
 
         self.do_nms = cfg.model.nms
 
@@ -31,7 +31,7 @@ class Analyzer(torch.nn.Module):
         # Construct the pit-tensor
         # Used to Caculate the absulute position of offset, this tensor fulfilled that t[x,y,z] = [x,y,z], pit refers to position index tensor
         self.register_buffer('pit', torch.ones(
-            self.space_size).nonzero().view(self.space_size + [3]))
+            self.out_size).nonzero().view(self.out_size + (3,)))
         self.register_buffer('empty_tensor', torch.tensor([]))
 
     def forward(self, predictions, targets):
@@ -60,8 +60,8 @@ class Analyzer(torch.nn.Module):
         # pre-process
         # ------------------------------------
         # Reshape to batch,X,Y,Z,4,ele
-        predictions = predictions.view([-1] + self.output_shape)
-        targets = targets.view([-1] + self.output_shape)
+        predictions = predictions.view((-1,) + self.output_shape)
+        targets = targets.view((-1,) + self.output_shape)
         batch_size = predictions.size(0)
         # Change to ele,X,Y,Z,4
         predictions = predictions.permute(0, 4, 1, 2, 3, 5)

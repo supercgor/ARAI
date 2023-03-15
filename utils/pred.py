@@ -11,7 +11,11 @@ class Pred():
         
         self.ml, self.model, self.logger, self.tb_writer = Loader(cfg, make_dir = False)
 
-        self.pl = poscarLoader(f"{cfg.path.data_root}/{cfg.data.dataset}", model_name = cfg.model.checkpoint, lattice=cfg.data.real_size, elem=cfg.data.elem_name)
+        self.pl = poscarLoader(f"{cfg.path.data_root}/{cfg.data.dataset}", 
+                               model_name = cfg.model.checkpoint, 
+                               lattice=cfg.data.real_size, 
+                               out_size = cfg.model.out_size[::-1],
+                               elem=cfg.data.elem_name)
 
         self.analyzer = Analyzer(cfg).cuda()
 
@@ -45,13 +49,10 @@ class Pred():
             predictions = model(inputs)
             
             for filename, x in zip(filenames, predictions):
-                self.pl.save4npy(f"{filename}.poscar", x, conf = 0)
+                self.pl.save4npy(f"{filename}.poscar", x, conf = cfg.model.threshold)
                 if not os.path.exists(f"{cfg.path.data_root}/{cfg.data.dataset}/npy/{cfg.model.checkpoint}"):
                     os.mkdir(f"{cfg.path.data_root}/{cfg.data.dataset}/npy/{cfg.model.checkpoint}")
                 torch.save(x.cpu().numpy(), f"{cfg.path.data_root}/{cfg.data.dataset}/npy/{cfg.model.checkpoint}/{filename}.npy")
-                
-            if cfg.setting.show:
-                print("Finish!")
 
         # -------------------------------------------
   

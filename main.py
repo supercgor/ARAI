@@ -6,12 +6,11 @@ from utils.pred import Pred
 
 # ---------------------------------------
 
-def run():
+def run(mode = "train"):
     
     parser = Parser()
     options, _ = parser.parse_args()
     # debug
-    mode = "train"
     cfg = get_config(vars(options))
     
     if mode == 'train':
@@ -23,9 +22,9 @@ def run():
     elif mode == 'predict':
         trainer = Pred(cfg)
         trainer.predict()
-    
+
 if __name__ == '__main__':
     set_seed(1)
-    run()
+    run(mode = "train")
 
 #test

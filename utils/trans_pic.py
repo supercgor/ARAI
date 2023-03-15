@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-
+import torchvision.transforms as tf
 
 # def center_crop(img, final_size=(256, 256)):
 #     raw_shape = np.array(img.shape)
