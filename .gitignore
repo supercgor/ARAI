@@ -5,7 +5,10 @@ __pycache__/
 *.ipynb
 debug*
 train*
+
+datasets/data/*
+!datasets/data/DATASETNAME/
+
 model/*/
-data/
 runs/*/
 debug.py
