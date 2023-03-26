@@ -1,12 +1,15 @@
 from utils.tools import Parser, set_seed
 from config import get_config
-from utils.train import Trainer
-from utils.test import Test
-from utils.pred import Pred
+from train import Trainer
+from test import Test
+from pred import Pred
+from tune import Tuner
+
+# 后边正常写你的代码
 
 # ---------------------------------------
 
-def run(mode = "train"):
+def run(mode):
     
     parser = Parser()
     options, _ = parser.parse_args()
@@ -22,6 +25,9 @@ def run(mode = "train"):
     elif mode == 'predict':
         trainer = Pred(cfg)
         trainer.predict()
+    elif mode == 'tune':
+        trainer = Tuner(cfg)
+        trainer.fit()
 
 if __name__ == '__main__':
     set_seed(1)

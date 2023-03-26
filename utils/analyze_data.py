@@ -1,7 +1,7 @@
 import os
 import torch
 from numpy import pi
-
+from .tools import metStat
 
 class Analyzer(torch.nn.Module):
     def __init__(self, cfg):
@@ -203,17 +203,17 @@ class Analyzer(torch.nn.Module):
                     key = f"{ele}-{split_past:3.1f}-{split:3.1f}"
 
                     if f"{key}-TP" in dic:
-                        dic[f"{key}-TP"] += TP_num
-                        dic[f"{key}-FP"] += FP_num
-                        dic[f"{key}-FN"] += FN_num
-                        dic[f"{key}-ACC"] += acc/batch_size
-                        dic[f"{key}-SUC"] += suc/batch_size
+                        dic[f"{key}-TP"].add(TP_num)
+                        dic[f"{key}-FP"].add(FP_num)
+                        dic[f"{key}-FN"].add(FN_num)
+                        dic[f"{key}-ACC"].add(acc)
+                        dic[f"{key}-SUC"].add(suc)
                     else:
-                        dic[f"{key}-TP"] = TP_num
-                        dic[f"{key}-FP"] = FP_num
-                        dic[f"{key}-FN"] = FN_num
-                        dic[f"{key}-ACC"] = acc/batch_size
-                        dic[f"{key}-SUC"] = suc/batch_size
+                        dic[f"{key}-TP"] = metStat(TP_num, mode= "sum", dtype=torch.long)
+                        dic[f"{key}-FP"] = metStat(FP_num, mode= "sum", dtype=torch.long)
+                        dic[f"{key}-FN"] = metStat(FN_num, mode= "sum", dtype=torch.long)
+                        dic[f"{key}-ACC"] = metStat(acc)
+                        dic[f"{key}-SUC"] = metStat(suc)
 
                     split_past = split
         return dic

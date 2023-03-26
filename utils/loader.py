@@ -45,123 +45,43 @@ def Loader(cfg, make_dir=True):
     with open(f"{cfg.path.check_root}/{name}/info.json", "w") as f:
         json.dump(info_dict, f, indent = 4)
     
-    if not os.path.exists(f"{cfg.path.check_root}/{name}/tb_log"):
-        os.mkdir(f"{cfg.path.check_root}/{name}/tb_log")
-    
     load_dir = f"{cfg.path.check_root}/{load_name}"
     work_dir = f"{cfg.path.check_root}/{name}"
         
     return load_dir, work_dir
 
-# def Loader(cfg, make_dir=True, log_name="train.log", cuda=True, show_para = False):
-#     # 這一部份會決定是否先產生一個新的文件夾
-#     load_name = cfg.model.checkpoint
-#     if load_name != "":
-#         if os.path.exists(f"{cfg.path.check_root}/{load_name}"):
-#             f = open(f"{cfg.path.check_root}/{load_name}/info.json")
-#         else:
-#             raise NameError(f"No model in {cfg.path.check_root} is called {load_name}")
-#     else:
-#         f = open(f"{cfg.path.check_root}/default_info.json")
-    
-#     info_dict = json.load(f)
-#     f.close()
-#     if make_dir:
-#         i = 0
-#         while True:
-#             name = f"{cfg.model.net}-{time.strftime('%m%d-%H')}-{i}"
-#             if info_dict['best'] != "" and os.path.exists(f"{cfg.path.check_root}/{name}"):
-#                 i += 1
-#             else:
-#                 if not os.path.exists(f"{cfg.path.check_root}/{name}"):
-#                     os.mkdir(f"{cfg.path.check_root}/{name}")
-#                 break
-#     else:
-#         name = load_name
-
-#     cfg.merge_from_dict(info_dict)
-
-#     # logger的相關設定
-    
-#     logger = Logger(f"{cfg.path.check_root}/{name}", 
-#                     log_name=log_name,
-#                     elem=cfg.data.elem_name, 
-#                     split=cfg.setting.split)
-    
-#     # 讀取model
-#     ml = modelLoader(path = f"{cfg.path.check_root}/{name}", 
-#                      keeps= cfg.setting.max_save)
-    
-#     log = ml.load(path = f"{cfg.path.check_root}/{load_name}",
-#             best = cfg.model.best,
-#             net = cfg.model.net,
-#             inp_size = cfg.model.inp_size, 
-#             out_size = cfg.model.out_size, 
-#             hidden_channels = cfg.model.channels)
-
-#     logger.info(log)
-    
-#     # Tensorboard 初始化
-#     if not os.path.exists(f"{cfg.path.check_root}/{name}/tb_log"):
-#         os.mkdir(f"{cfg.path.check_root}/{name}/tb_log")
-#     writer = SummaryWriter(log_dir = f"{cfg.path.check_root}/{name}/tb_log/{i}",
-#                            comment= name,
-#                            filename_suffix = str(i))
-    
-#     # 是否顯示模型的參數
-#     if show_para:
-#         model_structure(ml.model)
-
-#     # 是否使用GPU
-
-#     if cuda:
-#         if len(cfg.setting.device) > 1:
-#             parallel = True
-#         else:
-#             parallel = False
-
-#         ml.cuda(parallel=parallel)
-
-#     # 將 info.json 烤貝一份到新的目錄
-
-#     with open(f"{cfg.path.check_root}/{name}/info.json", "w") as f:
-#         json.dump(info_dict, f, indent = 4)
-        
-#     return ml, ml.model, logger, writer
-
-
 class modelLoader():
-    def __init__(self, path = "", keeps=5):
-        self.path = path
+    def __init__(self, load_dir, work_dir, model_keeps=5, load_info_name = "info.json", work_info_name = "info.json", cuda = False):
         self.best = ""
-        self.keeps = keeps
+        self.keeps = model_keeps
+        self._cuda = cuda
         self.keeps_name = []
         self.parallel = False
-        # check
+        self.load_dir = load_dir
+        self.work_dir = work_dir
+        self.load_json = f"{load_dir}/{load_info_name}"
+        self.work_json = f"{work_dir}/{work_info_name}"
+        
+        if os.path.exists(self.load_json):
+            self.load_dict = json.load(open(self.load_json, "r"))
+        else:
+            self.load_dict = {}
 
-    def load(self, path = "/home/supercgor/gitfile/data/model/3A_ref", 
-             net = "UNet3D", 
-             best = "",
-             cuda = False, 
-             **kwargs):
-        if net in ["UNet3D", "TransUNet3D"]:
-            self._model = model[net](img_channels = 1, 
-                                    **kwargs)
-        else:
-            self._model = model[net](**kwargs)
-        if best == "":
-            self._model.weight_init()
-            info = f"No model is loaded, start a new model: {net}"
-        else:
-            model_weight = torch.load(f"{path}/{best}")
+    def load(self, net = "UNet3D",**kwargs):
+        self._model = model[net](**kwargs)
+        if "best" in self.load_dict:
+            model_weight = torch.load(f"{self.load_dir}/{self.load_dict['best']}")
             try:
                 self._model.load_state_dict(model_weight)
-                info = f"Load model parameters from {path}/{best}"
+                info = f"Load model parameters from {self.load_dir}/{self.load_dict['best']}"
             except RuntimeError:
                 match_list = self._model.load_pretrained_layer(model_weight)
                 info = f"Different model! Load match layers: {match_list}"
-        
-        if cuda:
+        else:
+            self._model.weight_init()
+            info = f"No model is loaded, start a new model: {net}"
+            
+        if self._cuda:
             self.cuda(parallel = True)
             
         return info
@@ -180,28 +100,34 @@ class modelLoader():
             self._model = nn.DataParallel(self._model, device_ids=device_ids)
 
     def save_info(self, cfg):
-        f = open(f"{self.path}/info.json")
+        f = open(f"{self.work_json}")
         info_dict = json.load(f)
         info_dict = fill_dict(info_dict, cfg)
         info_dict["best"] = self.best
+        info_dict["tag"] = self.tag
         f.close()
-        with open(f"{self.path}/info.json", "w") as f:
+        with open(f"{self.work_json}", "w") as f:
             json.dump(info_dict, f, indent= 4)
 
-    def save_model(self, name):
-        if len(self.keeps_name) == self.keeps:
+    def save_model(self, name, tag = ""):
+        if name[-4:] == ".pkl":
+            name = name[:-4]
+        save_name = f"{name}_{tag}.pkl"
+        if len(self.keeps_name) >= self.keeps:
             # model save num == threshold, delete the oldest one and save new model
             # delete the oldest model
             rm_name = self.keeps_name.pop(0)
-            os.remove(f"{self.path}/{rm_name}")
+            os.remove(f"{self.work_dir}/{rm_name}")
 
         # save new model
         state_dict = self._model.state_dict()
         if self.parallel:
             state_dict = self._Parallel2Single(state_dict)
-        torch.save(state_dict, f"{self.path}/{name}")
-        self.best = name
-        self.keeps_name.append(f"{name}")
+        self.best = save_name
+        self.tag = tag
+
+        torch.save(state_dict, f"{self.work_dir}/{save_name}")
+        self.keeps_name.append(save_name)
 
     @property
     def model(self):

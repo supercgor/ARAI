@@ -1,6 +1,8 @@
 import torch.autograd
 from torch import nn
+from torch.nn import functional as F
 from .unet_part import *
+from .parts import *
 
 class UNet3D(nn.Module):
     def __init__(self, 
@@ -97,13 +99,14 @@ class TransUNet3D(nn.Module):
         x1 = self.inc(x)     # (batch_size, 32, 10, 128, 128)
         x2 = self.down1(x1)  # (batch_size, 64, 10, 64, 64)
         x3 = self.down2(x2)  # (batch_size, 128, 10, 32, 32)
+        feature = x3
         x4 = self.down3(x3)  # (batch_size, 256, 5, 16, 16)
         x5 = self.down4(x4)  # (batch_size, 256, 2, 8, 8)
         x5 = self.vit(x5)
         x = self.up1(x4, x5)
-        feature = self.up2(x3, x)  # (batch_size, 64, 5, 32, 32)
+        x = self.up2(x3, x)  # (batch_size, 64, 5, 32, 32)
         # torch.Size([batch_size, 64, Z, 32, 32])
-        x = self.up3(x2, feature)
+        x = self.up3(x2, x)
         x = self.up4(x1, x)  # (batch_size, 32, 5, 128, 128)
         x = F.interpolate(x, (self.out_size[0], self.out_size[1] * 4, self.out_size[2] * 4), mode='trilinear', align_corners=True)
         # (batch_size, 32, output_z, 128, 128)

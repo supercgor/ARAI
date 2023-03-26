@@ -2,5 +2,10 @@ __pycache__/
 *.pkl
 *.log
 *.out
+*.ipynb
 debug*
 train*
+model/*
+data/
+runs/*
+debug.py

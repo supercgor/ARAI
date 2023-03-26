@@ -11,6 +11,8 @@ from optparse import OptionParser
 from utils import __version__, __date__
 from yacs.config import CfgNode as CN
 from torch.autograd import Function
+from torchvision.utils import make_grid
+from collections.abc import Iterable
 
 class ReverseLayerF(Function):
 
@@ -168,11 +170,111 @@ class CfgNode(CN):
 def fill_dict(dic, cfg: CfgNode):
     for key in cfg:
         for sub_key in cfg[key]:
-            if sub_key in dic and dic[sub_key] is not None and dic[sub_key] != "":
+            if sub_key in dic:
                 dic[sub_key] = cfg[key][sub_key]
     return dic
 
+def output_target_to_imgs(output, target):
+    batch, X, Y, Z, _ = output.shape
+    out_img = output[0, ..., (3, 7)] > 0
+    out_img = torch.permute(out_img, (3, 2, 0, 1))  # X, Y, Z, C -> C, Z, H, W
+    out_img = torch.reshape(out_img, (2, Z, 1, X, Y))
+    tar_img = target[0, ..., (3, 7)]
+    tar_img = torch.permute(tar_img, (3, 2, 0, 1))
+    tar_img = torch.reshape(tar_img, (2, Z, 1, X, Y))
+    imgs = []
+    for out, tar in zip(out_img, tar_img):
+        img = torch.cat([tar, tar, out], dim = 1)
+        img = make_grid(img, padding = 1, pad_value = 1)
+        imgs.append(img)
+    imgs = make_grid(imgs, nrow = 1)
+    return imgs
 
+class metStat():
+    def __init__(self, value = None, mode:str = "mean", dtype = torch.float64, device = "cpu"):
+        """To help you automatically find the mean or sum, which allows us to calculate something easily and consuming less space. 
+        Args:
+            mode (str): should be 'mean' or 'sum'
+        """
+        self.n = 0
+        self._dtype = dtype
+        self._mode = mode
+        self._device = device
+        self._value = torch.tensor(0, dtype= dtype, device= device)
+        self._last = self._value.item()
+        if value is not None:
+            self.add(value)
+    
+    def add(self, other):
+        if isinstance(other, Iterable) or isinstance(other ,metStat):
+            self.extend(other)
+        else:
+            self.append(other)
+        
+    def append(self, x):
+        if isinstance(x, torch.Tensor):
+            x = x.item()
+        self._last = x
+        self.n += 1
+        if self._mode == "mean":
+            self._value = self._value * ((self.n - 1) / self.n) + x * (1 / self.n)
+        elif self._mode == "sum":
+            self._value = self._value + x
+        self._value = self._value.type(self._dtype)
+    
+    def extend(self, xs):
+        if isinstance(xs, metStat):
+            value = xs.value.to(self.device, non_blocking=True)
+            self._last = value.item()
+            n = len(xs)
+            if self._mode == "mean":
+                self._value = self._value * (self.n / (n + self.n)) + value * (n / (n + self.n))
+            elif self._mode == "sum":
+                self._value = self._value + value
+            self.n = self.n + n
+            
+        else:
+            if isinstance(xs, torch.Tensor) and xs.dim() == 0:
+                self.append(xs)
+                
+            elif isinstance(xs, Iterable):
+                for value in xs:
+                    self.append(value)
+            else:
+                raise TypeError(f"{type(xs)} is not an iterable")
+          
+    def __repr__(self):
+        return f"{self._value.item():.4f}, mode: {self._mode}, len: {self.n}"
+    
+    def __call__(self):
+        return self._value.item()
+    
+    def __str__(self):
+        return str(self._value.item())
+    
+    def __len__(self):
+        return self.n
+    
+    def __format__(self, code):
+        return self._value.item().__format__(code)
+    
+    @property
+    def device(self):
+        return self._device
+    
+    @property
+    def value(self):
+        return self._value
+    
+    @property
+    def dtype(self):
+        return self._dtype
+    
+    @property
+    def last(self):
+        return self._last
+    
+    
 def Parser():
 
     parser = OptionParser(

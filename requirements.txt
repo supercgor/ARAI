@@ -1,0 +1,10 @@
+numpy
+matplotlib
+tqdm
+pandas
+yacs
+opencv-python
+torch
+trochvision
+torchaudio
+tensorboard

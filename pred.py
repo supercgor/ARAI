@@ -2,7 +2,7 @@ import time
 import torch
 
 from utils.analyze_data import *
-from utils.dataset import make_dataset
+from datasets.dataset import make_dataset
 from utils.loader import Loader, poscarLoader
 
 class Pred():

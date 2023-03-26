@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from utils.analyze_data import *
-
+from torch.autograd import grad
 
 class Criterion(nn.Module):
     def __init__(self, cfg, local_epoch = 9999):
@@ -99,7 +99,40 @@ class Criterion(nn.Module):
         else:
             return loss_local / loss_local.item() * 0.1 * self.loss
         
+class ganLoss(nn.Module):
+    """Using WGan-gp idea, this is calculating the gan loss of the images: L = P(T) - P(G)"""
+    def __init__(self, alpha = 1,real_label=1.0, fake_label=0.0):
+        super(ganLoss, self).__init__()
         
+        self.alpha = alpha
+        self.register_buffer('real_label', torch.tensor(real_label))
+        self.register_buffer('fake_label', torch.tensor(fake_label))
+
+    def forward(self, pred_real, is_real: bool):
+        if is_real:
+            loss = - pred_real.mean()
+        else:
+            loss = pred_real.mean()
+        return self.alpha * loss    
+
+class grad_penalty(nn.Module):
+    def __init__(self, alpha = 10,output_size = (8,)):
+        super(grad_penalty, self).__init__()
+        
+        self.batch_size = output_size[0]
+        self.register_buffer('grad_output', torch.ones(output_size))
+        self.alpha = alpha
+        
+    def forward(self, net ,gen_data, real_data):
+        alpha = torch.rand(self.batch_size, device= gen_data.device)
+        data = (gen_data.transpose(0,3) * alpha + real_data.transpose(0,3) * (1 - alpha)).transpose(0, 3)
+        data.requires_grad_(True)
+        result = net(data)
+        
+        gradients = grad(inputs=data, outputs=result, grad_outputs= self.grad_output, create_graph=True, retain_graph=True)[0]
+        gradients = gradients.view(self.batch_size, -1)
+        gradients_norm = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
+        return ((gradients_norm - 1) ** 2).mean() * self.alpha
     
 if __name__ == '__main__':
     pass

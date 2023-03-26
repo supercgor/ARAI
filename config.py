@@ -8,9 +8,9 @@ _C.path = CN()
 # the root of all file
 _C.path.root = '/home/supercgor/gitfile'
 # datasets path
-_C.path.data_root = '/home/supercgor/gitfile/data'
+_C.path.data_root = '/home/supercgor/gitfile/ARAI/datasets/data'
 # checkpoints path
-_C.path.check_root = '/home/supercgor/gitfile/data/model'
+_C.path.check_root = '/home/supercgor/gitfile/ARAI/model'
 # Save file dir
 _C.path.save_dir = ""
 # OVITO
@@ -21,12 +21,12 @@ _C.path.ovito = ""
 # -----------------------------------------------------------------------------
 _C.setting = CN()
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.setting.batch_size = 4
+_C.setting.batch_size = 2
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.setting.pin_memory = True
 # Number of data loading threads
 _C.setting.num_workers = 0
-# 0 for using one GPU or list for Parallel device idx
+# 0 for using one GPU or list for Parallel device idx, no cpu: []
 _C.setting.device = [0]
 # Training epochs
 _C.setting.epochs = 50
@@ -48,13 +48,13 @@ _C.setting.split = [0.0, 3.0]
 # -----------------------------------------------------------------------------
 _C.model = CN()
 # checkpoint name
-_C.model.checkpoint = ""
+_C.model.checkpoint = "newtransunet"
 # use net
 _C.model.net = "TransUNet3D"
 # the init channels number
 _C.model.channels = 32
 # the size of input and output. (Z, X, Y)
-_C.model.inp_size = (10, 128, 128)
+_C.model.inp_size = (16, 128, 128)
 _C.model.out_size = (4, 32, 32)
 # Threshold
 _C.model.threshold = 0.5

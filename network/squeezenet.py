@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import math
 import torch.nn.functional as F
-from .fire import Fire
 from .basic import model_structure, SingleConv
+from .parts import Fire
 
 class SqueezeNet(nn.Module):
 

@@ -1,11 +1,11 @@
 import time
 import torch
 
-from .analyze_data import *
-from .criterion import Criterion
-from .dataset import make_dataset
-from .loader import Loader, poscarLoader
-from .tools import condense
+from utils.analyze_data import *
+from utils.criterion import Criterion
+from datasets.dataset import make_dataset
+from utils.loader import Loader, poscarLoader
+from utils.tools import condense
 
 class Test():
     def __init__(self, cfg):
