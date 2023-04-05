@@ -31,6 +31,6 @@ def run(mode):
 
 if __name__ == '__main__':
     set_seed(1)
-    run(mode = "train")
+    run(mode = "predict")
 
 #test

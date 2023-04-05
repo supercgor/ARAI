@@ -2,17 +2,20 @@ import os
 import time
 import numpy as np
 from tqdm import tqdm
+import json
 
 import torch
 from torch import nn
 from torchvision.utils import make_grid
 from torch.utils.tensorboard import SummaryWriter
+from network import model
+from network.basic import basicParallel
 
 from utils.analyze_data import *
 from utils.criterion import Criterion
-from utils.tools import metStat, output_target_to_imgs
+from utils.tools import metStat, output_target_to_imgs, fill_dict
 from datasets.dataset import make_dataset
-from utils.loader import Loader, modelLoader
+from utils.loader import Loader
 from utils.logger import Logger
 
 class Trainer():
@@ -37,21 +40,27 @@ class Trainer():
 
         self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/{i}")
 
-        self.main_network = modelLoader(
-            self.load_dir, self.work_dir, model_keeps=cfg.setting.max_save, cuda=True)
+        self.model = model[cfg.model.net](inp_size=cfg.model.inp_size, out_size=cfg.model.out_size, hidden_channels=cfg.model.channels, out_feature= False)
+        
+        self.model.save_num = cfg.setting.max_save
 
-        log = self.main_network.load(net=cfg.model.net,
-                                     inp_size=cfg.model.inp_size,
-                                     out_size=cfg.model.out_size,
-                                     hidden_channels=cfg.model.channels,
-                                     out_feature= False)
-
-        self.model = self.main_network.model
-
-        self.logger.info(log)
+        if cfg.model.best != "":
+            self.model.load(f"{self.load_dir}/{cfg.model.best}")
+            log = f"Load model parameters from {self.load_dir}/{cfg.model.best}"
+        else:
+            self.model.init()
+            log = f"No model is loaded, start a new model: {self.model.name}"
 
         if self.cuda:
+            self.model.cuda()
             self.analyzer = Analyzer(cfg).cuda()
+            
+        if len(cfg.setting.device) >= 2:
+            self.model = basicParallel(self.model, cfg.seting.device)
+        
+        self.logger.info(log)
+
+        
 
     def fit(self):
         # --------------------------------------------------
@@ -276,9 +285,16 @@ class Trainer():
                                    ACC in zip(elem, ele_ACC)])
             model_name += f"_{self.best_LOSS:.6f}"
 
-            self.main_network.save_model("MN", tag=model_name)
+            self.model.save(f"{self.work_dir}/ML_{model_name}")
 
-            self.main_network.save_info(cfg)
+            f = open(f"{self.work_dir}/info.json")
+            info_dict = json.load(f)
+            info_dict = fill_dict(info_dict, cfg)
+            info_dict["best"] = self.best
+            info_dict["tag"] = self.tag
+            f.close()
+            with open(f"{self.work_dir}/info.json", "w") as f:
+                json.dump(info_dict, f, indent= 4)
 
             logger.info(f"Saved a new model: {model_name}")
         else:

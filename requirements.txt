@@ -8,3 +8,5 @@ torch
 trochvision
 torchaudio
 tensorboard
+torchmetrics
+torchmetrics[image]

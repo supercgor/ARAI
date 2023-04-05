@@ -302,7 +302,70 @@ class poscarLoader():
 
     def save4npy(self, name, pred, NMS=True, conf=0.7):
         return self.save(name, self.npy2pos(pred, NMS=NMS, conf=conf))
+    
+    @classmethod
+    def pos2poscar(self, 
+                   path,                    # the path to save poscar
+                   points_dict,             # the orderdict of the elems : {"O": N *　(Z,X,Y)}
+                   real_size = (3, 25, 25)  # the real size of the box
+                   ):
+        output = ""
+        output += f"{' '.join(points_dict.keys())}\n"
+        output += f"{1:3.1f}" + "\n"
+        output += f"\t{real_size[1]:.8f} {0:.8f} {0:.8f}\n"
+        output += f"\t{0:.8f} {real_size[2]:.8f} {0:.8f}\n"
+        output += f"\t{0:.8f} {0:.8f} {real_size[0]:.8f}\n"
+        output += f"\t{' '.join(points_dict.keys())}\n"
+        output += f"\t{' '.join(str(len(i)) for i in points_dict.values())}\n"
+        output += f"Selective dynamics\n"
+        output += f"Direct\n"
+        for ele in points_dict:
+            p = points_dict[ele]
+            for a in p:
+                output += f" {a[1]/real_size[1]:.8f} {a[2]/real_size[2]:.8f} {a[0]/real_size[0]:.8f} T T T\n"
 
+        with open(path, 'w') as f:
+            f.write(output)
+            
+        return
+    
+    @classmethod
+    def poscar2pos(self, path):
+        with open(path, 'r') as f:
+            f.readline()
+            scale = float(f.readline())
+            x = float(f.readline().split(" ")[0])
+            y = float(f.readline().split(" ")[1])
+            z = float(f.readline().split(" ")[2])
+            real_size = (z, x, y)
+            elem = OrderedDict((i,int(j)) for i,j in zip(f.readline()[1:-1].split(" "),f.readline().split(" ")))
+            f.readline()
+            f.readline()
+            pos = OrderedDict((e, []) for e in elem.keys())
+            for e in elem:
+                for i in range(elem[e]):
+                    X,Y,Z = map(float,f.readline().split(" ")[1:4])
+                    pos[e].append([Z * z, X * x, Y * y])
+                pos[e] = torch.tensor(pos[e])
+        return scale, real_size, elem, pos
+    
+    @classmethod
+    def pos2box(self, points_dict, real_size, out_size):
+        expand = torch.tensor(tuple(i/j for i,j in zip(out_size, real_size)))
+        OUT = torch.zeros(len(points_dict),*out_size, 4)
+        for i, e in enumerate(points_dict):
+            POS = points_dict[e] * expand
+            IND = POS.int()
+            offset = POS - IND
+            ONE = torch.ones((offset.shape[0],1))
+            offset = torch.cat((offset, ONE), dim = 1)
+            IND = IND
+            OUT[i,IND[...,0],IND[...,1],IND[...,2]] = offset
+        return OUT
+            
+            
+            
+    
 
 class Logger():
     def __init__(self, path, log_name="train.log", elem=("O", "H"), split=(0, 3)):

@@ -48,7 +48,7 @@ _C.setting.split = [0.0, 3.0]
 # -----------------------------------------------------------------------------
 _C.model = CN()
 # checkpoint name
-_C.model.checkpoint = "newtransunet"
+_C.model.checkpoint = "tune_3dunet"
 # use net
 _C.model.net = "TransUNet3D"
 # the init channels number
@@ -57,7 +57,7 @@ _C.model.channels = 32
 _C.model.inp_size = (16, 128, 128)
 _C.model.out_size = (4, 32, 32)
 # Threshold
-_C.model.threshold = 0.5
+_C.model.threshold = 0.0
 # NMS
 _C.model.nms = True
 
@@ -66,7 +66,7 @@ _C.model.nms = True
 # -----------------------------------------------------------------------------
 _C.data = CN()
 # use dataset
-_C.data.dataset = 'bulkice'
+_C.data.dataset = 'exp'
 # How many images will be used
 _C.data.img_use = 10
 # Element names

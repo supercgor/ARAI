@@ -1,9 +1,191 @@
 import os
 import torch
-from numpy import pi
+import math
+from torch import nn
+from torchvision.utils import make_grid
+from torchmetrics.image.fid import FrechetInceptionDistance
+from collections import OrderedDict
 from .tools import metStat
 
-class Analyzer(torch.nn.Module):
+class FIDQ3D(nn.Module):
+    """Calculate the FID for quasi 3D systems, Input shape is like (B, X, Y, Z, 8)
+
+    Args:
+        nn (_type_): _description_
+    """
+    def __init__(self, feature = 64):
+        super(FIDQ3D, self).__init__()
+        self.register_buffer("FID", FrechetInceptionDistance(feature=feature))
+        
+    def forward(self, predictions, targets):
+        # B * X * Y * Z * 8
+        batch, X, Y, Z, LST = predictions.shape
+        x = predictions[..., range(3,LST, 4)] > 0
+        x = torch.permute(x, (0, 4, 3, 1,  2))  # X, Y, Z, C -> C, Z, H, W
+        x = x.reshape((batch * 2 * Z, 1, X, Y))
+        x = (x * 255).to(dtype = torch.uint8)
+        self.FID.update(x, real=False)
+        
+        batch, X, Y, Z, LST = targets.shape
+        x = targets[..., range(3, LST, 4)] > 0
+        x = torch.permute(x, (0, 4, 3, 1, 2))  # X, Y, Z, C -> C, Z, H, W
+        x = x.reshape((batch * 2 * Z, 1, X, Y))
+        x = (x * 255).to(dtype = torch.uint8)
+        self.FID.update(x, real=True)
+        
+        self.FID.compute()
+
+class Analyzer2(nn.Module):
+    def __init__(self, 
+                 out_size = (4, 32, 32),                # output size of the model box ( Z * X * Y )
+                 real_size = (3, 25, 25),               # real size of the box
+                 scale = 1.4,                           # allow the radius become larger
+                 threshold = 0.5,                       # the cutoff threshold
+                 sort: bool = True,                     # sort the points according to the confidence
+                 nms: bool = True,                      # use nms or not
+                 split = (0, 3.0),                      # the boundary of the layer
+                 d: OrderedDict = ...                   # radius of the atoms
+                 ):
+        super(Analyzer2, self).__init__()
+        if d is Ellipsis:
+            d = OrderedDict(O = 0.740, H = 0.528)
+        for key in d:
+            d[key] = d[key] * scale
+            
+        self.D = d
+        self.S = split
+        self.N = nms
+        self.sort = sort
+
+        expand = tuple(j/i for i,j in zip(out_size, real_size))
+        self.register_buffer("expand", torch.tensor(expand))
+        IND_MAT = torch.ones(out_size)
+        IND_MAT = torch.nonzero(IND_MAT).view(IND_MAT.shape + (3,))
+        self.register_buffer("IND", IND_MAT)
+        
+        self.threshold = threshold
+        
+        self.init()
+        
+    def init(self):
+        self.P = OrderedDict((key, []) for key in self.D.keys())
+        self.T = OrderedDict((key, []) for key in self.D.keys())
+        self.TP = OrderedDict((key, []) for key in self.D.keys())
+        self.FP = OrderedDict((key, []) for key in self.D.keys())
+        self.FN = OrderedDict((key, []) for key in self.D.keys())
+
+    def forward(self, predictions, targets):
+        assert predictions.shape == targets.shape, f"prediction shape {predictions.shape} doesn't match {targets.shape}"
+        
+        try:
+            batch, X, Y, Z, LST = predictions.shape
+        except ValueError:
+            batch, X, Y, Z, LST = 1, *predictions.shape
+            
+        preds = torch.reshape(predictions, (batch, X, Y,Z, LST//4, 4))  # to (b, X, Y, Z, 2, 4)
+        preds = torch.permute(preds, (0, 4, 3, 1, 2, 5))                # to (b, 2, Z, X, Y, 4)
+        preds = preds[...,(2,0,1,3)]                                    # to (dz, dx, dy, c)
+        preds[...,:3] = (preds[...,:3] + self.IND) * self.expand        # make offset to actual position
+        preds = preds.reshape(batch, LST//4,-1, 4)                      # to (b, 2, Z * X * Y, 4)
+        
+        targs = torch.reshape(targets, (batch, X, Y,Z, LST//4, 4))
+        targs = torch.permute(targs, (0, 4, 3, 1, 2, 5))
+        targs = targs[...,(2,0,1,3)]                                    # to (dz, dx, dy, c)
+        targs[...,:3] = (targs[...,:3] + self.IND) * self.expand
+        targs = targs.reshape(batch, LST//4,-1, 4)
+        self.init()
+        for b , (Pred, Targ) in enumerate(zip(preds, targs)):
+            for e, pred, targ in zip(self.D.keys() ,Pred, Targ):
+                inds = pred[...,3] > self.threshold
+                P = pred[inds]
+                if self.sort:
+                    inds = torch.argsort(P[...,3], descending= True)
+                    P = P[inds]
+                P = P[...,:3]
+                
+                inds = targ[...,3] > self.threshold
+                T = targ[inds]
+                if self.sort:
+                    inds = torch.argsort(T[...,3], descending= True)
+                    T = T[inds]
+                T = T[...,:3]
+                
+                if self.N:
+                    P, _ = self.nms(P, self.D[e])
+                    T, _ = self.nms(T, self.D[e])
+                
+                TP, FP, FN = self.match(P, T, self.D[e])
+                self.P[e].append(P)
+                self.T[e].append(T)
+                self.TP[e].append(TP)
+                self.FP[e].append(FP)
+                self.FN[e].append(FN)
+        
+                
+    @classmethod
+    def match(self, pred, targ, distance):
+        """match two group of points if there distance are lower that a given threshold
+
+        Args:
+            pred (tensor): N * 3
+            targ (tensor): M * 3
+            distance (_type_): float
+
+        Returns:
+            (matched from pred, non-matched from pred, non-matched from targ) : R * 3, (N - R) * 3, (M - R) * 3
+        """
+        SELECT_P = torch.full((pred.shape[0],), False)
+        SELECT_T = torch.full((targ.shape[0],), False)
+        DIS_MAT = torch.cdist(pred, targ) < distance
+        try:
+            for a,b in DIS_MAT.nonzero():
+                if not SELECT_P[a] and not SELECT_T[b]:
+                    SELECT_P[a], SELECT_T[b] = True, True
+        except ValueError:
+            pass
+        return pred[SELECT_P], pred[SELECT_P.logical_not()], targ[SELECT_T.logical_not()]
+        
+
+    @classmethod
+    def nms(self, points, distance):
+        """do the nms for a table of points, and e means the elem type
+
+        Args:
+            points (tensor): the shape is like N * 3
+            r (float): a float
+
+        Returns:
+            tuple: Selected, Not selected
+        """
+        SELECT = torch.full((points.shape[0],), True)
+        DIS_MAT = torch.cdist(points, points) < distance
+        DIS_MAT = torch.triu(DIS_MAT, diagonal= 1).T
+        try:
+            for b,a in DIS_MAT.nonzero():
+                if SELECT[a]:
+                    SELECT[b] = False
+        except ValueError:
+            pass
+        return points[SELECT], points[SELECT.logical_not()]
+    
+    @classmethod
+    def split(self, points, split):
+        """_summary_
+
+        Args:
+            points (tensor): Z, X, Y
+            split (None | tuple, optional): _description_. Defaults to None.
+        """
+            
+        SELECT = torch.logical_and(points[...,0] > split[0], points[...,0] < split[1])
+        
+        if len(split) > 2:
+            return points[SELECT], *self.split(points[SELECT.logical_not()], split = split[1:])
+        
+        else:
+            return points[SELECT]
+                
+class Analyzer(nn.Module):
     def __init__(self, cfg):
         super(Analyzer, self).__init__()
         # mark the config
@@ -85,7 +267,7 @@ class Analyzer(torch.nn.Module):
 
                 T_position = (target[..., :3] + pit)[mask_t] * lattice_expand
                 P_position = (prediction[..., :3] + pit)[mask_p] * lattice_expand
-
+                
                 prediction_nms, P_nmspos = self.nms(prediction, diameter)
 
                 # Matching the nearest
@@ -217,112 +399,3 @@ class Analyzer(torch.nn.Module):
 
                     split_past = split
         return dic
-
-    def to_poscar(self, predictions, filenames, out_dir, nms=True, npy=False):
-
-        batch_size = predictions.size(0)
-
-        if npy:
-            for batch in range(batch_size):
-                filename = filenames[batch]
-                file_path = os.path.join(out_dir, self.cfg.model.checkpoint.split(
-                    "/")[-1][:-4], filename + '.npy')
-                torch.save(predictions[batch], file_path)
-
-        predictions = predictions.view([-1] + self.output_shape)
-
-        predictions = predictions.permute(0, 4, 1, 2, 3, 5)
-
-        P_pos = []
-        for batch in range(batch_size):
-            _P_pos = []
-            for ele, diameter in enumerate(self.ele_diameter):
-                prediction = predictions[batch, ele]
-                prediction_nms, ele_P = self.nms(prediction, diameter)
-                ele_P = ele_P / self.real_size
-                _P_pos.append(ele_P)
-            P_pos.append(_P_pos)
-
-        for batch in range(batch_size):
-            for position_list, filename in zip(P_pos, filenames):
-                output = ""
-                output += f"{' '.join(self.elem)}\n"
-                output += f"{1.0:3.1f}" + "\n"
-                output += f"\t{self.real_size[0].item():.8f} {0:.8f} {0:.8f}\n"
-                output += f"\t{0:.8f} {self.real_size[1].item():.8f} {0:.8f}\n"
-                output += f"\t{0:.8f} {0:.8f} {self.real_size[2].item():.8f}\n"
-                output += f"\t{' '.join(self.elem)}\n"
-                output += f"\t{' '.join([f'{ele_pos.size(0):d}' for ele_pos in position_list])}\n"
-                output += f"Selective dynamics\n"
-                output += f"Direct\n"
-                for i, ele in enumerate(self.elem):
-                    P_ele = position_list[i].tolist()
-                    for atom in P_ele:
-                        output += f" {atom[0]:.8f} {atom[1]:.8f} {atom[2]:.8f} T T T\n"
-
-                save_dir = os.path.join(
-                    out_dir, self.cfg.TRAIN.CHECKPOINT.split("/")[-1][:-4])
-                if not os.path.exists(save_dir):
-                    os.mkdir(save_dir)
-
-                file_path = os.path.join(save_dir, filename + '.poscar')
-                with open(file_path, 'w') as f:
-                    f.write(output)
-
-
-class RDF(torch.nn.Module):
-    def __init__(self, cfg, delta=0.05, stop=10):
-        super(RDF, self).__init__()
-        self.cfg = cfg
-
-        # some initialization
-        self.elem = cfg.data.elem_name
-
-        self.stop = stop
-
-        self.inver_delta = 1 / delta
-
-        self.total = int(stop * self.inver_delta)
-
-        self.register_buffer('real_size', torch.tensor(cfg.data.real_size))
-        self.register_buffer(
-            'vol', self.real_size[0] * self.real_size[1] * self.real_size[2])
-        self.register_buffer('slice_vol', torch.arange(
-            delta/2, stop, delta) ** 1 * delta * 2 * pi * 3)
-
-        self.register_buffer("number", torch.zeros(1))
-        self.register_buffer("count", torch.zeros(
-            len(self.elem), len(self.elem), self.total))
-
-    def forward(self, pos: list):
-        device = self.number.device
-        for i, ele in enumerate(self.elem):
-            for j, o_ele in enumerate(self.elem):
-                ele_pos = pos[i]
-                other_pos = pos[j]
-                density = len(other_pos) / self.vol
-                dist = (torch.cdist(ele_pos * self.real_size,
-                        other_pos * self.real_size) * self.inver_delta).int()
-
-                if i == j:
-                    dist.fill_diagonal_(9999)
-
-                dist_count = torch.unique(
-                    dist, return_counts=True, sorted=True)
-                mask = dist_count[0] < self.stop * self.inver_delta
-                dist_count = (dist_count[0][mask].tolist(),
-                              dist_count[1][mask]/density)
-                buf = torch.zeros(self.total, device=device)
-                buf[dist_count[0]] = dist_count[1]
-                buf = buf / self.slice_vol / len(ele_pos)
-                self.count[i, j] += buf
-        self.number += 1
-
-    def save(self):
-        pass
-        #TODO
-        # self.count = self.count / self.number
-        # path = os.path.join(LOG_DIR, f'{DATE}-RDF.npy')
-        # torch.save(self.count, path)
-        # self.count.zero_()
-        # self.number.zero_()

@@ -1,7 +1,8 @@
 import torch
 from torch import nn
+from .basic import basicModel
 
-class NLayerDiscriminator(nn.Module):
+class NLayerDiscriminator(basicModel):
     """Defines a PatchGAN discriminator"""
 
     def __init__(self, in_channels = 128, hidden_channels=64, n_layers=3):
