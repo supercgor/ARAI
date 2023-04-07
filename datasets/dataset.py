@@ -8,7 +8,7 @@ import numpy as np
 from torch.utils.data.dataset import Dataset
 from utils.tools import read_POSCAR, read_file
 from .trans_pic import *
-from .poscar import generate_target
+from .poscar import poscar
 from . import split_layer
 import random
 import math
@@ -116,7 +116,7 @@ class AFMDataset(Dataset):
         self.filenames = read_file(os.path.join(root_path, file_list))
         self.model_inp_img = model_inp[0]
         self.img_use = img_use
-        self.model_out = model_out[0]
+        self.out_size = model_out
         self.img_size = model_inp[1:]
         self.ind_gen = indexGen(
             use_len=img_use, out_len=model_inp[0], rand=True)
@@ -129,10 +129,9 @@ class AFMDataset(Dataset):
                         indices,
                         img_size=self.img_size,
                         transform=self.transform)
-        poscar_path = os.path.join(self.root, 'label', f"{filename}.poscar")
-        info, positions = read_POSCAR(poscar_path)
-        target = torch.from_numpy(generate_target(
-            info, positions, self.ele_name, self.model_out)).float()
+        poscar_path = f"{self.root}/label/{filename}.poscar"
+        target = poscar.load(poscar_path)
+        target = poscar.pos2box(target['pos'], target['real_size'], out_size=self.out_size)
         return data, target, filename
 
     def __len__(self):

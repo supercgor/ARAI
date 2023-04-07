@@ -12,22 +12,101 @@ from utils import __version__, __date__
 from yacs.config import CfgNode as CN
 from torch.autograd import Function
 from torchvision.utils import make_grid
+from einops import repeat
 from collections.abc import Iterable
+from collections import defaultdict
 
-class ReverseLayerF(Function):
-
-    @staticmethod
-    def forward(ctx, x, alpha):
-        ctx.alpha = alpha
-
-        return x.view_as(x)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        output = grad_output.neg() * ctx.alpha
-
-        return output, None
-
+class metStat():
+    def __init__(self, value = None, mode:str = "mean", dtype = torch.float64, device = "cpu"):
+        """To help you automatically find the mean or sum, which allows us to calculate something easily and consuming less space. 
+        Args:
+            mode (str): should be 'mean' or 'sum'
+        """
+        self.n = 0
+        self._dtype = dtype
+        self._mode = mode
+        self._device = device
+        self._value = torch.tensor(0, dtype= dtype, device= device)
+        self._last = self._value.item()
+        if value is not None:
+            self.add(value)
+    
+    def add(self, other):
+        if isinstance(other, Iterable) or isinstance(other ,metStat):
+            self.extend(other)
+        else:
+            self.append(other)
+        
+    def append(self, x):
+        if isinstance(x, torch.Tensor):
+            x = x.item()
+        self._last = x
+        self.n += 1
+        if self._mode == "mean":
+            self._value = self._value * ((self.n - 1) / self.n) + x * (1 / self.n)
+        elif self._mode == "sum":
+            self._value = self._value + x
+        elif self._mode == "max":
+            self._value = max(self._value, x)
+        elif self._mode == "min":
+            self._value = min(self._value, x)
+        self._value = self._value.type(self._dtype)
+    
+    def extend(self, xs):
+        if isinstance(xs, metStat):
+            value = xs.value.to(self.device, non_blocking=True)
+            self._last = value.item()
+            n = len(xs)
+            if self._mode == "mean":
+                self._value = self._value * (self.n / (n + self.n)) + value * (n / (n + self.n))
+            elif self._mode == "sum":
+                self._value = self._value + value
+            elif self._mode == "max":
+                self._value = max(self._value, value)
+            elif self._mode == "min":
+                self._value = min(self._value, value)
+            self.n = self.n + n
+            
+        else:
+            if isinstance(xs, torch.Tensor) and xs.dim() == 0:
+                self.append(xs)
+                
+            elif isinstance(xs, Iterable):
+                for value in xs:
+                    self.append(value)
+            else:
+                raise TypeError(f"{type(xs)} is not an iterable")
+          
+    def __repr__(self):
+        return f"{self._value.item():.4f}, mode: {self._mode}, len: {self.n}"
+    
+    def __call__(self):
+        return self._value.item()
+    
+    def __str__(self):
+        return str(self._value.item())
+    
+    def __len__(self):
+        return self.n
+    
+    def __format__(self, code):
+        return self._value.item().__format__(code)
+    
+    @property
+    def device(self):
+        return self._device
+    
+    @property
+    def value(self):
+        return self._value
+    
+    @property
+    def dtype(self):
+        return self._dtype
+    
+    @property
+    def last(self):
+        return self._last
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -36,42 +115,11 @@ def set_seed(seed):
     np.random.seed(seed)
     return
 
-
-def model_structure(model):
-    blank = ' '
-    print('-' * 110)
-    print('|' + ' ' * 31 + 'weight name' + ' ' * 10 + '|'
-          + ' ' * 15 + 'weight shape' + ' ' * 15 + '|'
-          + ' ' * 3 + 'number' + ' ' * 3 + '|')
-    print('-' * 110)
-    num_para = 0
-    type_size = 1  # 如果是浮点数就是4
-
-    for index, (key, w_variable) in enumerate(model.named_parameters()):
-        if len(key) > 50:
-            key = key.split(".")
-            key = ".".join(i[:7] for i in key)
-        if len(key) <= 50:
-            key = key + (50 - len(key)) * blank
-        shape = str(w_variable.shape)
-        if len(shape) <= 40:
-            shape = shape + (40 - len(shape)) * blank
-        each_para = 1
-        for k in w_variable.shape:
-            each_para *= k
-        num_para += each_para
-        str_num = str(each_para)
-        if len(str_num) <= 10:
-            str_num = str_num + (10 - len(str_num)) * blank
-
-        print('| {} | {} | {} |'.format(key, shape, str_num))
-    print('-' * 110)
-    print('The total number of parameters: ' + str(num_para))
-    print('The parameters of Model {}: {:4f}M'.format(
-        model._get_name(), num_para * type_size / 1000 / 1000))
-    print('-' * 110)
-
-
+def washData(x, threshold = 0.9):
+    """x is the prediction for the data, the shape is B 4 Z X Y"""
+    mask = repeat(~(x[:,::4,...] > 0.5), "B E Z X Y -> B (E r) Z X Y", r = 4)
+    x = x.masked_fill(mask, 0)
+    
 def mkdir(path):
     if not os.path.exists(path):
         os.mkdir(path)
@@ -189,91 +237,6 @@ def output_target_to_imgs(output, target):
         imgs.append(img)
     imgs = make_grid(imgs, nrow = 1)
     return imgs
-
-class metStat():
-    def __init__(self, value = None, mode:str = "mean", dtype = torch.float64, device = "cpu"):
-        """To help you automatically find the mean or sum, which allows us to calculate something easily and consuming less space. 
-        Args:
-            mode (str): should be 'mean' or 'sum'
-        """
-        self.n = 0
-        self._dtype = dtype
-        self._mode = mode
-        self._device = device
-        self._value = torch.tensor(0, dtype= dtype, device= device)
-        self._last = self._value.item()
-        if value is not None:
-            self.add(value)
-    
-    def add(self, other):
-        if isinstance(other, Iterable) or isinstance(other ,metStat):
-            self.extend(other)
-        else:
-            self.append(other)
-        
-    def append(self, x):
-        if isinstance(x, torch.Tensor):
-            x = x.item()
-        self._last = x
-        self.n += 1
-        if self._mode == "mean":
-            self._value = self._value * ((self.n - 1) / self.n) + x * (1 / self.n)
-        elif self._mode == "sum":
-            self._value = self._value + x
-        self._value = self._value.type(self._dtype)
-    
-    def extend(self, xs):
-        if isinstance(xs, metStat):
-            value = xs.value.to(self.device, non_blocking=True)
-            self._last = value.item()
-            n = len(xs)
-            if self._mode == "mean":
-                self._value = self._value * (self.n / (n + self.n)) + value * (n / (n + self.n))
-            elif self._mode == "sum":
-                self._value = self._value + value
-            self.n = self.n + n
-            
-        else:
-            if isinstance(xs, torch.Tensor) and xs.dim() == 0:
-                self.append(xs)
-                
-            elif isinstance(xs, Iterable):
-                for value in xs:
-                    self.append(value)
-            else:
-                raise TypeError(f"{type(xs)} is not an iterable")
-          
-    def __repr__(self):
-        return f"{self._value.item():.4f}, mode: {self._mode}, len: {self.n}"
-    
-    def __call__(self):
-        return self._value.item()
-    
-    def __str__(self):
-        return str(self._value.item())
-    
-    def __len__(self):
-        return self.n
-    
-    def __format__(self, code):
-        return self._value.item().__format__(code)
-    
-    @property
-    def device(self):
-        return self._device
-    
-    @property
-    def value(self):
-        return self._value
-    
-    @property
-    def dtype(self):
-        return self._dtype
-    
-    @property
-    def last(self):
-        return self._last
-    
     
 def Parser():
 

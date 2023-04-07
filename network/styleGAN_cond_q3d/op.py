@@ -2,7 +2,7 @@ import torch
 from torch import nn, einsum
 import torch.nn.functional as F
 from kornia.filters import filter3d
-from math import log2
+from math import log2,sqrt
 from einops import rearrange
 from collections import OrderedDict
 
@@ -263,7 +263,7 @@ class RBGBlock(nn.Module):
         
         return x
 
-class styleBlock(nn.Module):
+class styleBlock3d(nn.Module):
     def __init__(self,
                  input_channels: int,                       # The input channels
                  style_channels: int,                       # the channels for style
@@ -289,7 +289,7 @@ class styleBlock(nn.Module):
         
         self.act = nn.LeakyReLU()
         self.out = RBGBlock(style_channels, out_channels, latent_channels, upsample_out) # the RGB one is bigger than the latent picture
-        
+    
     def forward(self, 
                 x: torch.Tensor,                    # The input tensor ( B C Z X Y ) 
                 S: torch.Tensor,                    # The latent code ( B S ), S = 512
@@ -313,6 +313,34 @@ class styleBlock(nn.Module):
         
         prev = self.out(x, S2, prev)
         return x, prev
+
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.reshape(x.shape[0], -1)
+
+class DiscriminatorBlock3d(nn.Module):
+    def __init__(self, 
+                 in_channels, 
+                 out_channels, 
+                 downsample: tuple | bool = (1, 2, 2)):
+        super().__init__()
+        self.conv_res = nn.Conv3d(in_channels, out_channels, 1, stride = (downsample if downsample else 1))
+
+        self.net = nn.Sequential(
+            SingleConv(in_channels=in_channels, out_channels= out_channels, kernel_size = 3, order = "cl", padding = 1),
+            SingleConv(in_channels=out_channels, out_channels= out_channels, kernel_size = 3, order = "cl", padding = 1)
+        )
+
+        self.downSample = nn.Sequential(
+            Blur3d(),
+            nn.Conv3d(out_channels, out_channels, 1, stride = downsample) if downsample else nn.Identity())
+
+    def forward(self, x):
+        res = self.conv_res(x)
+        x = self.net(x)
+        x = self.downSample(x)
+        x = (x + res) * (1 / sqrt(2))
+        return x
 
 class MapStyle3d(nn.Module):
     def __init__(self,                              # input shape : (B cin Z X Y)

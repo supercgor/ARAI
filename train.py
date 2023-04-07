@@ -2,65 +2,107 @@ import os
 import time
 import numpy as np
 from tqdm import tqdm
+from collections import OrderedDict
 import json
+import math
+
 
 import torch
+from einops import rearrange
 from torch import nn
 from torchvision.utils import make_grid
 from torch.utils.tensorboard import SummaryWriter
-from network import model
+import network
 from network.basic import basicParallel
 
-from utils.analyze_data import *
-from utils.criterion import Criterion
-from utils.tools import metStat, output_target_to_imgs, fill_dict
+from utils.analyze_data import analyse, FIDQ3D
+from utils.criterion import basicLoss, wassersteinLoss, grad_penalty
+from utils.tools import metStat, fill_dict
 from datasets.dataset import make_dataset
 from utils.loader import Loader
 from utils.logger import Logger
 
+
 class Trainer():
     def __init__(self, cfg):
         self.cfg = cfg
+        
+        self.times_DET = 1
+        self.times_GAN = 0
+        self.times_DISC = 0
+        
         self.cuda = cfg.setting.device != []
 
         self.load_dir, self.work_dir = Loader(cfg, make_dir=True)
 
-        self.logger = Logger(
-            path=f"{self.work_dir}",
-            log_name="train.log",
-            elem=cfg.data.elem_name,
-            split=cfg.setting.split)
+        self.logger = Logger(path= self.work_dir, elem=cfg.data.elem_name, split=cfg.setting.split)
 
-        i = 0
-        while True:
-            if not os.path.exists(f"{self.work_dir}/runs/{i}"):
-                break
-            else:
-                i += 1
+        self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
 
-        self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/{i}")
-
-        self.model = model[cfg.model.net](inp_size=cfg.model.inp_size, out_size=cfg.model.out_size, hidden_channels=cfg.model.channels, out_feature= False)
-        
-        self.model.save_num = cfg.setting.max_save
-
-        if cfg.model.best != "":
-            self.model.load(f"{self.load_dir}/{cfg.model.best}")
-            log = f"Load model parameters from {self.load_dir}/{cfg.model.best}"
-        else:
-            self.model.init()
-            log = f"No model is loaded, start a new model: {self.model.name}"
-
-        if self.cuda:
-            self.model.cuda()
-            self.analyzer = Analyzer(cfg).cuda()
+        log = []
+        self.model = {}
+        if self.times_DET:
+            try:
+                self.DET = network.UNet3D().cuda() if self.cuda else network.UNet3D()
+                self.DET.requires_grad_(False)
+                self.loss_DET = basicLoss().cuda() if self.cuda else basicLoss()
+                
+                path = f"{self.load_dir}/{cfg.model.DET}"
+                self.DET.load(path)
+                log.append(f"Load Detector parameters from {path}")
+            except (FileNotFoundError, IsADirectoryError):
+                self.DET.init()
+                log.append(f"No Detector is loaded, start a new model: {self.DET.name}")
+            if len(cfg.setting.device) >= 2:
+                self.DET = basicParallel(self.DET, cfg.seting.device)
             
-        if len(cfg.setting.device) >= 2:
-            self.model = basicParallel(self.model, cfg.seting.device)
+            self.model["DET"] = self.DET
+            self.OPT_DET = torch.optim.Adam(self.DET.parameters(), lr=self.cfg.setting.learning_rate)
+                
+        if self.times_GAN:
+            try:
+                self.GAN = network.StyleGAN3D().cuda() if self.cuda else network.StyleGAN3D()
+                self.GAN.requires_grad_(False)
+                self.loss_GAN = wassersteinLoss(alpha = 1)
+                
+                path = f"{self.load_dir}/{cfg.model.GAN}"
+                self.GAN.load(path)
+                log.append(f"Load Generator parameters from {path}")
+            except FileNotFoundError:
+                self.GAN.init()
+                log.append(f"No Generator is loaded, start a new model: {self.GAN.name}")
+            if len(cfg.setting.device) >= 2:
+                self.GAN = basicParallel(self.GAN, cfg.seting.device)
+                
+            self.model["GAN"] = self.GAN
+            self.OPT_GAN = torch.optim.Adam(self.GAN.parameters(), lr=self.cfg.setting.learning_rate)
         
-        self.logger.info(log)
+        if self.times_DISC:
+            try:
+                self.DISC = network.Discriminator3D().cuda() if self.cuda else network.Discriminator3D()
+                self.DISC.requires_grad_(False)
+                self.loss_DISC = wassersteinLoss(alpha = -1)
+                self.loss_GP = grad_penalty(net = self.DISC)
+                
+                path = f"{self.load_dir}/{cfg.model.DISC}"
+                self.DISC.load(path)
+                log.append(f"Load Discriminator parameters from {path}")
+            except FileNotFoundError:
+                self.DISC.init()
+                log.append(f"No Discriminator is loaded, start a new model: {self.DISC.name}")
+            if len(cfg.setting.device) >= 2:
+                self.DISC = basicParallel(self.DISC, cfg.seting.device)
+            
+            self.model["DISC"] = self.DISC
+            self.OPT_DISC = torch.optim.Adam(self.DISC.parameters(), lr=self.cfg.setting.learning_rate)
+                
+        self.analyse = analyse().cuda() if self.cuda else analyse()
+        
+        self.FID = FIDQ3D(feature = 192).cuda() if self.cuda else FIDQ3D(feature= 192)
+        self.FID.requires_grad_(False)
 
-        
+        for l in log:
+            self.logger.info(l)
 
     def fit(self):
         # --------------------------------------------------
@@ -68,16 +110,9 @@ class Trainer():
         self.train_loader = make_dataset('train', self.cfg)
 
         self.valid_loader = make_dataset('valid', self.cfg)
-    
-        self.optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.cfg.setting.learning_rate)
 
-        self.criterion = Criterion(self.cfg, self.cfg.setting.local_epoch)
-
-        if self.cuda:
-            self.criterion = self.criterion.cuda()
-
-        self.best_LOSS = 999.0
+        self.best = {'loss': metStat(mode = "min"), 'FID': metStat(mode = "min")}
+        self.best_met = 9999
 
         # --------------------------------------------------
         self.logger.info(f'Start training.')
@@ -93,13 +128,23 @@ class Trainer():
                 log_valid_dic = {}
 
             self.logger.epoch_info(epoch, log_train_dic, log_valid_dic)
-            for key in log_train_dic:
-                self.tb_writer.add_scalar(
-                    f"EPOCH/TRAIN {key}", log_train_dic[key].value, epoch)
+            for key, MET in log_train_dic.items():
+                if key != 'analyse':
+                    self.tb_writer.add_scalar(f"EPOCH/TRAIN {key}", MET.value, epoch)
+                else:
+                    for e_name, sub in MET.items():
+                        for layer, subsub in sub.items():
+                            for met_name, met in subsub.items():
+                                self.tb_writer.add_scalar(f"EPOCH/TRAIN {e_name} {layer} {met_name}", met.value, epoch)
 
-            for key in log_valid_dic:
-                self.tb_writer.add_scalar(
-                    f"EPOCH/VALID {key}", log_valid_dic[key].value, epoch)
+            for key, MET in log_valid_dic.items():
+                if key != 'analyse':
+                    self.tb_writer.add_scalar(f"EPOCH/VALID {key}", MET.value, epoch)
+                else:
+                    for e_name, sub in MET.items():
+                        for layer, subsub in sub.items():
+                            for met_name, met in subsub.items():
+                                self.tb_writer.add_scalar(f"EPOCH/VALID {e_name} {layer} {met_name}", met.value, epoch)
 
             # ---------------------------------------------
             # Saver here
@@ -114,188 +159,284 @@ class Trainer():
         # --------------------------------------------------
 
         self.logger.info(f'End training.')
+    
+    @staticmethod
+    def get_dict():
+        return OrderedDict(
+            grad_DET = metStat(mode = "mean"),
+            grad_DISC = metStat(mode = "mean"),
+            grad_GAN = metStat(mode = "mean"),
+            FID = metStat(mode = "mean"),
+            loss_GAN = metStat(mode = "mean"),
+            loss_GP = metStat(mode = "mean"),
+            loss_DISC = metStat(mode = "mean"),
+            loss_DET = metStat(mode = "mean"),
+        )
 
     def train(self, epoch):
         # -------------------------------------------
-
+        
         len_loader = len(self.train_loader)
-        it_train_loader = iter(self.train_loader)
+        
+        len_loader = len_loader - len_loader % (self.times_DET + self.times_GAN + self.times_DISC)
+        
+        it_loader = iter(self.train_loader)
 
         # -------------------------------------------
 
-        self.model.train()
-        log_dic = {'loss': metStat(),
-                   'grad': metStat()}
+        log_dic = self.get_dict()
 
+        for name, model in self.model.items():
+            model.train()
+            
         pbar = tqdm(total=len_loader - 1,
                     desc=f"Epoch {epoch} - Train", position=0, leave=True, unit='it')
 
         i = 0
-        while i < len_loader - 1:
-            self.model.requires_grad_(True)
-
-            inputs, targets, _ = next(it_train_loader)
-
-            inputs = inputs.cuda(non_blocking=True)
-
-            targets = targets.cuda(non_blocking=True)
-
-            predictions = self.model(inputs)
-
-            loss = self.criterion(predictions, targets)
-
-            info = self.analyzer(predictions, targets)
-
-            loss = loss + self.criterion.loss_local(epoch, info)
-
-            loss.backward()
-            # Train for data domain
-
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(), self.cfg.setting.clip_grad, error_if_nonfinite=True)
-
-            self.optimizer.step()
-
-            self.optimizer.zero_grad()
-
-            count_info = self.analyzer.count(info)
-
-            for key in count_info:
-                if key in log_dic:
-                    log_dic[key].add(count_info[key])
-                else:
-                    log_dic[key] = count_info[key]
-
-            log_dic['loss'].add(loss)
-            log_dic['grad'].add(grad_norm)
-
-            for key in ['loss', 'grad']:
-                self.tb_writer.add_scalar(
-                    f"TRAIN/{key}", log_dic[key](), (epoch-1) * len_loader + i)
-
-            if i % 100 == 0:
-                batch, _, Z, X, Y = inputs.shape
-                input_img = torch.reshape(inputs, (batch, Z, 1, X, Y))
-                input_img = make_grid(input_img[0])
-                self.tb_writer.add_image(f"TRAIN/Input Image",
-                                        input_img, global_step=(epoch-1) * len_loader + i)
-                imgs = output_target_to_imgs(predictions, targets)
-                self.tb_writer.add_image(f"TRAIN/Output Image", imgs,
-                                        global_step=(epoch-1) * len_loader + i)
-
-            if self.cfg.setting.show:
-                pbar.set_postfix(loss=log_dic['loss'].last, grad=log_dic['grad'].last)
-                pbar.update(1)
+        while i < len_loader:
+            if self.times_DET > 0:
+                for t in range(self.times_DET):
+                    inputs, targets, _ = next(it_loader)
+                    if self.cuda:
+                        inputs, targets = inputs.cuda(non_blocking = True), targets.cuda(non_blocking = True)
+                    # random apply noise
+                    targets[:, ::4, ...] = (targets[:, ::4, ...] - 0.05).abs() + (torch.randn_like(targets[:, ::4, ...]) * 0.05).clip(-0.05, 0.05)
+                    
+                    self.DET.requires_grad_(True)
+                    y,_ = self.DET(inputs)
+                    self.analyse(y, targets)
+                    ana_dic = self.analyse.compute()
+                    loss_det = self.loss_DET(y, targets)
+                    log_dic['loss_DET'].add(loss_det)
+                    loss_det.backward()
+                    i += 1
+                    pbar.update(1)
+                    inp_img = rearrange(inputs, "B C Z X Y -> B C X (Z Y)")
+                    inp_img = make_grid(inp_img, nrow = 1)
+                    self.tb_writer.add_image(f"TRAIN/Input Image", inp_img, global_step=(epoch-1) * len_loader + i)
+                    out_img = rearrange(y, "B (C E) Z X Y -> C B E X (Z Y)", C = 4)
+                    out_img = make_grid(out_img[0,:,(0,),...], nrow = 1)
+                    self.tb_writer.add_image(f"TRAIN/Output Image", out_img, global_step=(epoch-1) * len_loader + i)
+                    tar_img = rearrange(targets, "B (C E) Z X Y -> C B E X (Z Y)", C = 4)
+                    tar_img = make_grid(tar_img[0,:,(0,),...], nrow = 1)
+                    self.tb_writer.add_image(f"TRAIN/Target Image", tar_img, global_step=(epoch-1) * len_loader + i)
                 
-            i += 1
+                grad = nn.utils.clip_grad_norm_(self.DET.parameters(), self.cfg.setting.clip_grad, error_if_nonfinite=True)
+                log_dic['grad_DET'].add(grad)
+                pbar.set_postfix({key:f"{log_dic[key]:.4f}" for key in log_dic if log_dic[key].n != 0})
+                self.OPT_DET.step()
+                self.OPT_DET.zero_grad()
+                self.DET.requires_grad_(False)
+            
+            elif self.times_DISC > 0 and self.times_GAN > 0:
+                for t in range(self.times_DISC):
+                    inputs, targets, _ = next(it_loader)
+                    if self.cuda:
+                        inputs, targets = inputs.cuda(non_blocking = True), targets.cuda(non_blocking = True)
+                    # random apply noise
+                    targets[:, ::4, ...] = (targets[:, ::4, ...] - 0.05).abs() + (torch.randn_like(targets[:, ::4, ...]) * 0.05).clip(-0.05, 0.05)
+                    
+                    self.DISC.requires_grad_(True)
+                    x, f = self.DET(inputs)
+                    mask = x[:, (0,0,0), ...] < self.cfg.model.threshold
+                    x[:, 1:, ...][mask] = 0
+                    
+                    yh = self.GAN(f)
+                    mask = yh[:, (0,0,0), ...] < self.cfg.model.threshold
+                    yh[:, 1:, ...][mask] = 0
+                    
+                    y = torch.cat([targets[:,:4,...],yh], dim = 1)
+                    yp = self.DISC(y)
+                    yt = self.DISC(targets)
+                    loss_disc = self.loss_DISC(yp, yt)
+                    loss_gp = self.loss_GP(y, yp, yt)
+                    log_dic['loss_DISC'].add(loss_disc)
+                    log_dic['loss_GP'].add(loss_gp)
+                    loss = loss_disc + loss_gp
+                    loss.backward()
+                    i += 1
+                    pbar.update(1)
+                
+                grad = nn.utils.clip_grad_norm_(self.DISC.parameters(), 999, error_if_nonfinite=True)
+                log_dic['grad_DISC'].add(grad)
+                pbar.set_postfix({key:f"{log_dic[key]:.4f}" for key in log_dic if log_dic[key].n != 0})
+                self.OPT_DISC.step()
+                self.OPT_DISC.zero_grad()
+                self.DISC.requires_grad_(False)
+
+                for t in range(self.times_GAN):
+                    self.GAN.requires_grad_(True)
+                    if self.cuda:
+                        inputs, targets = inputs.cuda(non_blocking = True), targets.cuda(non_blocking = True)
+                    x, f = self.DET(inputs)
+                    mask = x[:, (0,0,0), ...] < self.cfg.model.threshold
+                    x[:, 1:, ...][mask] = 0
+                    
+                    yh = self.GAN(f)
+                    mask = yh[:, (0,0,0), ...] < self.cfg.model.threshold
+                    yh[:, 1:, ...][mask] = 0
+                    
+                    y = torch.cat([x,yh], dim = 1)
+                    yp = self.DISC(y)
+                    yt = self.DISC(targets)
+                    self.analyse(x, targets)
+                    ana_dic = self.analyse.compute()
+                    loss_gan = self.loss_DISC(yp, yt)
+                    log_dic['loss_GAN'].add(loss_gan)
+                    loss_gan.backward()
+                    i += 1
+                    pbar.update(1)
+                    inp_img = rearrange(inputs, "B C Z X Y -> B C X (Z Y)")
+                    inp_img = make_grid(inp_img, nrow = 1)
+                    self.tb_writer.add_image(f"TRAIN/Input Image", inp_img, global_step=(epoch-1) * len_loader + i)
+                    out_img = rearrange(y, "B (C E) Z X Y -> C B E X (Z Y)", C = 4)
+                    out_img = make_grid(out_img[0,:,(0,0,1),...], nrow = 1)
+                    self.tb_writer.add_image(f"TRAIN/Output Image", out_img, global_step=(epoch-1) * len_loader + i)
+                    tar_img = rearrange(targets, "B (C E) Z X Y -> C B E X (Z Y)", C = 4)
+                    tar_img = make_grid(tar_img[0,:,(0,0,1),...], nrow = 1)
+                    self.tb_writer.add_image(f"TRAIN/Target Image", tar_img, global_step=(epoch-1) * len_loader + i)
+                    
+                    
+                grad = nn.utils.clip_grad_norm_(self.GAN.parameters(), 999, error_if_nonfinite=True)
+                log_dic['grad_GAN'].add(grad)
+                pbar.set_postfix({key:f"{log_dic[key]:.4f}" for key in log_dic if log_dic[key].n != 0})
+                self.OPT_GAN.step()
+                self.OPT_GAN.zero_grad()
+                self.GAN.requires_grad_(False)
+
+            for key in log_dic.keys():
+                if key != 'analyse':
+                    self.tb_writer.add_scalar(
+                        f"TRAIN/{key}", log_dic[key](), (epoch-1) * len_loader + i)
+
         # -------------------------------------------
         pbar.update(1)
         pbar.close()
-        
+        log_dic['analyse'] = ana_dic
+
         return log_dic
 
     @torch.no_grad()
     def valid(self, epoch):
         # -------------------------------------------
 
-        self.model.eval()  # 切换模型为预测模式
-        log_dic = {'loss': metStat()}
+        log_dic = self.get_dict()
         len_loader = len(self.valid_loader)
         it_loader = iter(self.valid_loader)
+        
+        for name, model in self.model.items():
+            model.eval()
 
         pbar = tqdm(total=len_loader - 1,
-                    desc=f"Epoch {epoch} -  Test", position=0, leave=True, unit='it')
+                    desc=f"Epoch {epoch} -  Valid", position=0, leave=True, unit='it')
         
         i = 0
-        while i < len_loader - 1:
-            inputs, targets, _ = next(it_loader)
-
-            inputs = inputs.cuda(non_blocking=True)
-            targets = targets.cuda(non_blocking=True)
-
-            predictions = self.model(inputs)
-
-            loss = self.criterion(predictions, targets)
-
-            info = self.analyzer(predictions, targets)
-
-            loss_local = self.criterion.loss_local(epoch, info)
-
-            loss = loss + loss_local
-
-            count_info = self.analyzer.count(info)
-
-            for key in count_info:
-                if key in log_dic:
-                    log_dic[key].add(count_info[key])
-                else:
-                    log_dic[key] = count_info[key]
-
-            log_dic['loss'].add(loss)
-
-            for key in ['loss']:
-                self.tb_writer.add_scalar(
-                    f"VALID/{key}", log_dic[key](), (epoch-1) * len_loader + i)
-
-            if i == 0:
-                batch, _, Z, X, Y = inputs.shape
-                input_img = torch.reshape(inputs, (batch, Z, 1, X, Y))
-                input_img = make_grid(input_img[0])
-                self.tb_writer.add_image(f"VALID/Input Image",
-                                         input_img, global_step=(epoch-1) * len_loader + i)
-                imgs = output_target_to_imgs(predictions, targets)
-                self.tb_writer.add_image(f"VALID/Output Image", imgs,
-                                         global_step=(epoch-1) * len_loader + i)
-            
-            if self.cfg.setting.show:
-                pbar.set_postfix(loss=log_dic['loss'].last)
+        while i < len_loader:
+            if self.times_DET > 0:
+                inputs, targets, _ = next(it_loader)
+                if self.cuda:
+                    inputs, targets = inputs.cuda(non_blocking = True), targets.cuda(non_blocking = True)
+                targets[:, ::4, ...] = (targets[:, ::4, ...] - 0.05).abs() + (torch.randn_like(targets[:, ::4, ...]) * 0.05).clip(-0.05, 0.05)
+                
+                y,_ = self.DET(inputs)
+                self.analyse(y, targets)
+                ana_dic = self.analyse.compute()
+                loss_det = self.loss_DET(y, targets)
+                log_dic['loss_DET'].add(loss_det)
+                
+                if i == 0:
+                    inp_img = rearrange(inputs, "B C Z X Y -> B C X (Z Y)")
+                    inp_img = make_grid(inp_img, nrow = 1)
+                    self.tb_writer.add_image(f"VALID/Input Image", inp_img, global_step=(epoch-1) * len_loader + i)
+                    out_img = rearrange(y, "B (C E) Z X Y -> C B E X (Z Y)", C = 4)
+                    out_img = make_grid(out_img[0,:,(0,),...], nrow = 1)
+                    self.tb_writer.add_image(f"VALID/Output Image", out_img, global_step=(epoch-1) * len_loader + i)
+                    tar_img = rearrange(targets, "B (C E) Z X Y -> C B E X (Z Y)", C = 4)
+                    tar_img = make_grid(tar_img[0,:,(0,),...], nrow = 1)
+                    self.tb_writer.add_image(f"VALID/Target Image", tar_img, global_step=(epoch-1) * len_loader + i)
+                     
+            elif self.times_DISC > 0 and self.times_GAN > 0:
+                if self.cuda:
+                    inputs, targets = inputs.cuda(non_blocking = True), targets.cuda(non_blocking = True)
+                x, f = self.DET(inputs)
+                y = torch.cat([x,self.GAN(f)], dim = 1)
+                yp = self.DISC(y)
+                yt = self.DISC(targets)
+                self.analyse(x, targets)
+                ana_dic = self.analyse.compute()
+                loss_gan = self.loss_GAN(yp, yt)
+                loss_disc = self.loss_DISC(yp, yt)
+                log_dic['loss_GAN'].add(loss_gan)
+                log_dic['loss_DISC'].add(loss_disc)
+                i += 1
                 pbar.update(1)
-
+                
+                if i == 0:
+                    inp_img = rearrange(inputs, "B C Z X Y -> B C X (Z Y)")
+                    inp_img = make_grid(inp_img, nrow = 1)
+                    self.tb_writer.add_image(f"VALID/Input Image", inp_img, global_step=(epoch-1) * len_loader + i)
+                    out_img = rearrange(y, "B (C E) Z X Y -> C B E X (Z Y)", C = 4)
+                    out_img = make_grid(out_img[0,:,(0,0,1),...], nrow = 1)
+                    self.tb_writer.add_image(f"VALID/Output Image", out_img, global_step=(epoch-1) * len_loader + i)
+                    tar_img = rearrange(targets, "B (C E) Z X Y -> C B E X (Z Y)", C = 4)
+                    tar_img = make_grid(tar_img[0,:,(0,0,1),...], nrow = 1)
+                    self.tb_writer.add_image(f"VALID/Target Image", tar_img, global_step=(epoch-1) * len_loader + i)
+                
+            
             i += 1
+            pbar.update(1)
+            pbar.set_postfix({key:f"{log_dic[key]:.4f}" for key in log_dic if log_dic[key].n != 0})
+
+            log_dic['FID'].add(self.FID(y, targets))
+            
+            for key in log_dic.keys():
+                    if key != 'analyse':
+                        self.tb_writer.add_scalar(
+                            f"VALID/{key}", log_dic[key](), (epoch-1) * len_loader + i)
 
         # -------------------------------------------
-
         pbar.update(1)
         pbar.close()
-
+        log_dic['analyse'] = ana_dic
+        
         return log_dic
 
     def save(self, epoch, log_dic):
-
-        cfg = self.cfg
-        log_loss = log_dic['loss']()
+        met = 0
+        if log_dic["loss_DISC"].n > 0:
+            met += math.log2(log_dic["loss_DISC"]())
+        elif log_dic["FID"].n > 0:
+            met += math.log2(log_dic["FID"]())
+            
         logger = self.logger
-        elem = cfg.data.elem_name
-        split = cfg.setting.split
-        split = [f"{split[i]}-{split[i+1]}" for i in range(len(split)-1)]
+        
+        if met < self.best_met:
+            self.best_met = met
 
-        # -------------------------------------------
-
-        save = False
-        ele_ACC = []
-        for ele in elem:
-            ele_ACC.append(min(log_dic[f"{ele}-{i}-ACC"]() for i in split))
-
-        save = True if log_loss < self.best_LOSS else False
-
-        if save:
-            self.best_LOSS = log_loss
-            model_name = f"CP{epoch:02d}_"
-            model_name += "_".join([f"{ele}{ACC:.4f}" for ele,
-                                   ACC in zip(elem, ele_ACC)])
-            model_name += f"_{self.best_LOSS:.6f}"
-
-            self.model.save(f"{self.work_dir}/ML_{model_name}")
-
-            f = open(f"{self.work_dir}/info.json")
-            info_dict = json.load(f)
-            info_dict = fill_dict(info_dict, cfg)
-            info_dict["best"] = self.best
-            info_dict["tag"] = self.tag
-            f.close()
-            with open(f"{self.work_dir}/info.json", "w") as f:
-                json.dump(info_dict, f, indent= 4)
-
-            logger.info(f"Saved a new model: {model_name}")
+            log = []
+            try:
+                name = f"DET.CP{epoch:02d}_LOSS{log_dic['loss_DET']:.4f}_FID{log_dic['FID']}.pkl"
+                self.DET.save(f"{self.work_dir}/{name}")
+                log.append(f"Saved a new DET: {name}")
+            except AttributeError:
+                pass
+            
+            try:
+                name = f"DISC.CP{epoch:02d}_LOSS{log_dic['loss_DISC']:.4f}_FID{log_dic['FID']}.pkl"
+                self.DISC.save(f"{self.work_dir}/{name}")
+                log.append(f"Saved a new DISC: {name}")
+            except AttributeError:
+                pass
+            
+            try:
+                name = f"GAN.CP{epoch:02d}_LOSS{log_dic['loss_GAN']:.4f}_FID{log_dic['FID']}.pkl"
+                self.GAN.save(f"{self.work_dir}/{name}")
+                log.append(f"Saved a new GAN: {name}")
+            except AttributeError:
+                pass
+            
+            for i in log:
+                logger.info(i)
+                
         else:
             logger.info(f"No model was saved")

@@ -29,33 +29,64 @@ class Logger():
         info = f"\nEpoch = {epoch}" + "\n"
         info += f"Max memory use={torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB" + "\n"
 
-        info += f"Train INFO: loss = {train_dic['loss']:.10f}, grad = {train_dic['grad']:.10f}"
-        for ele in self.elem:
-            for split in self.split:
-                key = f"{ele}-{split}-"
-                info += "\n" + \
-                    f"{ele}({split}A): ACC = {train_dic[f'{key}ACC']:10.8f} SUC = {train_dic[f'{key}SUC']:10.8f} TP = {train_dic[f'{key}TP']:8.0f} FP = {train_dic[f'{key}FP']:8.0f} FN = {train_dic[f'{key}FN']:8.0f}"
-
-        info += "\n" + f"Valid INFO: loss = {valid_dic['loss']:.15f}"
-        for ele in self.elem:
-            for split in self.split:
-                key = f"{ele}-{split}-"
-                # O(0-3A):	accuracy=nan	success=1.0000	TP=0, FP=0, FN=0
-                info += "\n" + \
-                    f"{ele}({split}A): ACC = {valid_dic[f'{key}ACC']:10.8f} SUC = {valid_dic[f'{key}SUC']:10.8f} TP = {valid_dic[f'{key}TP']:8.0f} FP = {valid_dic[f'{key}FP']:8.0f} FN = {valid_dic[f'{key}FN']:8.0f}"
-
+        info += "Train INFO:"
+        for met in train_dic.keys():
+            if met != "analyse" and train_dic[met].n != 0:
+                info += f" {met} = {train_dic[met]:.6f},"
+        info += "\n"
+        if "analyse" in train_dic:
+            for ele in train_dic["analyse"].keys():
+                info += f"{ele}:\n"
+                for low, up in train_dic["analyse"][ele].keys():
+                    info += f"\t({low}-{up}A):"
+                    for met_name in train_dic["analyse"][ele][(low, up)]:
+                        met = train_dic["analyse"][ele][(low, up)][met_name]()
+                        if isinstance(met, int):
+                            info += f" {met_name} = {met:8.0f},"
+                        else:
+                            info += f" {met_name} = {met:6.4f}"
+                    info += "\n"
+        
+        info += "Valid INFO:"
+        for met in valid_dic.keys():
+            if met != "analyse" and valid_dic[met].n != 0:
+                info += f" {met} = {valid_dic[met]:.6f},"
+        info += "\n"
+        if "analyse":
+            for ele in valid_dic["analyse"].keys():
+                info += f"{ele}:\n"
+                for low, up in valid_dic["analyse"][ele].keys():
+                    info += f"\t({low}-{up}A):"
+                    for met_name in valid_dic["analyse"][ele][(low, up)]:
+                        met = valid_dic["analyse"][ele][(low, up)][met_name]()
+                        if isinstance(met, int):
+                            info += f" {met_name} = {met:8.0f},"
+                        else:
+                            info += f" {met_name} = {met:6.4f}"
+                    info += "\n"
+                        
         self.info(info)
 
     def test_info(self, test_dic):
         info = f"\nTesting info" + "\n"
         info += f"Max memory use={torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB" + "\n"
 
-        info += f"Testing info: loss = {test_dic['loss']:.10}, grad = {test_dic['grad']:.10f}"
-        for ele in self.elem:
-            for split in self.split:
-                key = f"{ele}-{split}-"
-                info += "\n" + \
-                    f"{ele}({split}A): ACC = {test_dic[f'{key}ACC']:10.8f} SUC = {test_dic[f'{key}SUC']:10.8f} TP = {test_dic[f'{key}TP']:8.0f} FP = {test_dic[f'{key}FP']:8.0f} FN = {test_dic[f'{key}FN']:8.0f}"
+        for met in test_dic.keys():
+            if met != "analyse":
+                info += f" {met} = {test_dic[met]:.6f},"
+        info += "\n"
+        if "analyse" in test_dic:
+            for ele in test_dic["analyse"].keys():
+                info += f"{ele}:\n"
+                for low, up in test_dic["analyse"][ele].keys():
+                    info += f"\t({low}-{up}A):"
+                    for met_name in test_dic["analyse"][ele][(low, up)]:
+                        met = test_dic["analyse"][ele][(low, up)][met_name]()
+                        if isinstance(met, int):
+                            info += f" {met_name} = {met:8.0f},"
+                        else:
+                            info += f" {met_name} = {met:6.4f}"
+                    info += "\n"
 
         self.info(info)
 

@@ -8,7 +8,6 @@ import torch
 from torch import nn
 from torchvision.utils import make_grid
 from torch.utils.tensorboard import SummaryWriter
-from network import model
 from network.basic import basicParallel
 
 from utils.analyze_data import *

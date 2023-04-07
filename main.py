@@ -1,9 +1,9 @@
 from utils.tools import Parser, set_seed
 from config import get_config
 from train import Trainer
-from test import Test
-from pred import Pred
-from tune import Tuner
+# from test import Test
+# from pred import Pred
+# from tune import Tuner
 
 # 后边正常写你的代码
 
@@ -31,6 +31,6 @@ def run(mode):
 
 if __name__ == '__main__':
     set_seed(1)
-    run(mode = "predict")
+    run(mode = "train")
 
 #test

@@ -2,129 +2,133 @@ import numpy as np
 import torch
 import os
 from pathlib import Path
+from collections import OrderedDict
 
 from utils.tools import read_POSCAR, read_file
 
 class poscar():
-    def __init__(self):
-        self.info = {}
-        self.info['ele'] = ("H","O")
-        self.info['scale'] = 1.0
-        self.info['lattice'] = torch.tensor([25,25,3])
-        self.poscar = ""
+    def __init__(self, 
+                 path, 
+                 lattice=(25, 25, 3), 
+                 out_size=(32, 32, 4), 
+                 elem=("O", "H"), 
+                 cutoff=OrderedDict(O=2.2, H=0.8)
+                 ):
+        self._lattice = np.asarray(lattice)
+        self._out_size = np.asarray(out_size)
+        self._elem = elem
+        self._cutoff = cutoff
+        self.zoom = [i/j for i, j in zip(lattice, out_size)]
+
+    @classmethod
+    def load(self, 
+             name,      # The name of the file, should end with .npy or .poscar
+             *args, 
+             **kwargs
+             ):
         
-    def generate_poscar(self,P_pos):
+        if ".npy" in name:
+            return self._load_npy(name, *args, **kwargs)
+        
+        elif ".poscar" in name:
+            return self._load_poscar(name, *args, **kwargs)
+        
+        else:
+            raise TypeError(f"There is no way to load {name}!")
+    
+    @classmethod
+    def _load_npy(self, name):
+        f = torch.load(name) # ( B C Z X Y)
+        return f
+
+    @classmethod
+    def _load_poscar(self, name):
+        with open(name, 'r') as f:
+            f.readline()
+            scale = float(f.readline().strip())
+            x = float(f.readline().strip().split(" ")[0])
+            y = float(f.readline().strip().split(" ")[1])
+            z = float(f.readline().strip().split(" ")[2])
+            real_size = (z, x, y)
+            elem = OrderedDict((i,int(j)) for i,j in zip(f.readline()[1:-1].strip().split(" "),f.readline().strip().split(" ")))
+            f.readline()
+            f.readline()
+            pos = OrderedDict((e, []) for e in elem.keys())
+            for e in elem:
+                for i in range(elem[e]):
+                    X,Y,Z = map(float,f.readline().strip().split(" ")[0:3])
+                    pos[e].append([Z * z, X * x, Y * y])
+                pos[e] = torch.tensor(pos[e])
+                pos[e][...,0].clip_(0,z - 0.00001)
+                pos[e][...,1].clip_(0,x - 0.00001)
+                pos[e][...,2].clip_(0,y - 0.00001)
+        return {"scale": scale, "real_size": real_size, "elem": elem, "pos": pos}
+    
+    @classmethod
+    def pos2box(self, points_dict, real_size = (3, 25, 25), out_size = (4, 32, 32)):
+        scale = torch.tensor([i/j for i,j in zip(out_size, real_size)])
+        OUT = torch.zeros(len(points_dict), 4,*out_size)
+        for i, e in enumerate(points_dict):
+            POS = points_dict[e] * scale
+            IND = POS.floor().int()
+            offset = (POS - IND)
+            ONE = torch.ones((offset.shape[0], 1))
+            offset = torch.cat((ONE, offset), dim = 1).T
+            OUT[i, :,IND[...,0],IND[...,1],IND[...,2]] = offset
+        return OUT.view(-1, *out_size).float()
+
+    def save(self, name, pos):
         output = ""
-        output += f"{' '.join(self.info['ele'])}\n"
-        output += f"{self.info['scale']:3.1f}" + "\n"
-        output += f"\t{self.info['lattice'][0].item():.8f} {0:.8f} {0:.8f}\n"
-        output += f"\t{0:.8f} {self.info['lattice'][1].item():.8f} {0:.8f}\n"
-        output += f"\t{0:.8f} {0:.8f} {self.info['lattice'][2].item():.8f}\n"
-        output += f"\t{' '.join(self.info['ele'])}\n"
-        output += f"\t{' '.join([int(ele.size(0)) for ele in P_pos])}\n"
+        output += f"{' '.join(self.elem)}\n"
+        output += f"{1:3.1f}" + "\n"
+        output += f"\t{self.lattice[0]:.8f} {0:.8f} {0:.8f}\n"
+        output += f"\t{0:.8f} {self.lattice[1]:.8f} {0:.8f}\n"
+        output += f"\t{0:.8f} {0:.8f} {self.lattice[2]:.8f}\n"
+        output += f"\t{' '.join([str(ele) for ele in pos])}\n"
+        output += f"\t{' '.join([str(pos[ele].shape[0]) for ele in pos])}\n"
         output += f"Selective dynamics\n"
         output += f"Direct\n"
-        for i,ele in enumerate(self.info['ele']):
-            P_ele = P_pos[i].tolist()
-            for atom in P_ele:
-                output += f" {atom[0]:.8f} {atom[1]:.8f} {atom[2]:.8f} T T T"
-        self.poscar = output
+        for ele in pos:
+            p = pos[ele]
+            for a in p:
+                output += f" {a[0]/self.lattice[0]:.8f} {a[1]/self.lattice[1]:.8f} {a[2]/self.lattice[2]:.8f} T T T\n"
+
+        path = f"{self.path}/result/{self.model_name}"
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        with open(f"{path}/{name}", 'w') as f:
+            f.write(output)
         return
-        
-    def save(self,pre_path):
-        with open(pre_path,'w') as f:
-            f.write(self.poscar)
-        return
+
+    def save4npy(self, name, pred, NMS=True, conf=0.7):
+        return self.save(name, self.npy2pos(pred, NMS=NMS, conf=conf))
     
-def generate_target(info, positions, ele_name, N):
-    size = (32, 32, N)
-    targets = np.zeros(size + (4 * len(ele_name),))
-    for i, ele in enumerate(ele_name):
-        target = np.zeros(size + (4,))
-        position = positions[ele]
-        position = position.dot(np.diag(size))
-        for j in range(info['ele_num'][ele]):
-            pos = position[j]
-            coordinate = np.int_(pos)
-            offset = pos - coordinate
-            idx_x, idx_y, idx_z = coordinate
-            offset_x, offset_y, offset_z = offset
-            if idx_z >= N:
-                idx_z = N - 1
-                offset_z = 1 - 1e-4
-            if target[idx_x, idx_y, idx_z, 3] == 0.0:  # overlap
-                target[idx_x, idx_y, idx_z] = [offset_x, offset_y, offset_z, 1.0]
-            else:
-                raise Exception
-        targets[..., 4 * i: 4 * (i + 1)] = target
-    return targets
+    @classmethod
+    def pos2poscar(self, 
+                   path,                    # the path to save poscar
+                   points_dict,             # the orderdict of the elems : {"O": N *　(Z,X,Y)}
+                   real_size = (3, 25, 25)  # the real size of the box
+                   ):
+        output = ""
+        output += f"{' '.join(points_dict.keys())}\n"
+        output += f"{1:3.1f}" + "\n"
+        output += f"\t{real_size[1]:.8f} {0:.8f} {0:.8f}\n"
+        output += f"\t{0:.8f} {real_size[2]:.8f} {0:.8f}\n"
+        output += f"\t{0:.8f} {0:.8f} {real_size[0]:.8f}\n"
+        output += f"\t{' '.join(points_dict.keys())}\n"
+        output += f"\t{' '.join(str(len(i)) for i in points_dict.values())}\n"
+        output += f"Selective dynamics\n"
+        output += f"Direct\n"
+        for ele in points_dict:
+            p = points_dict[ele]
+            for a in p:
+                output += f" {a[1]/real_size[1]:.8f} {a[2]/real_size[2]:.8f} {a[0]/real_size[0]:.8f} T T T\n"
 
-def positions2poscar(positions, info, path_prediction):
-    with open(path_prediction, 'w') as file:
-        file.write(str(info['comment']))
-        file.write(str(info['scale']) + '\n')
-        lattice = info["lattice"]
-        for i in range(3):
-            file.write(f'  \t{lattice[i, 0]:.8f} {lattice[i, 1]:.8f} {lattice[i, 2]:.8f}\n')
-        line1 = '\t'
-        line2 = '\t'
-        for ele in positions.keys():
-            position = positions[ele]
-            line1 += str(ele) + ' '
-            line2 += str(len(position)) + ' '
-            try:
-                position_array = np.concatenate((position_array, position), axis=0)
-            except UnboundLocalError:
-                position_array = position
-        line1 += '\n'
-        line2 += '\n'
-        file.write(line1)
-        file.write(line2)
-        file.write("Selective dynamics\nDirect\n")
-        for line in position_array:
-            file.write(f' {line[0]:.8f} {line[1]:.8f} {line[2]:.8f} T T T\n')
-
-
-def pre_tar2xyz(prediction, target, save_path, info, filename):
-    ele2r = {'H': 0.528, 'O': 0.74}
-    ele2color_cor = {'H': '1 1 1', 'O': '1 0.051 0.051'}  # R G B
-    ele2color_wor = {'H': '0 1 0', 'O': '0 0 1'}
-    save_path = Path(save_path) / filename
-    save_path.mkdir(parents=True, exist_ok=True)
-    with open(save_path / f'pre.xyz', 'w') as f_pre:
-        with open(save_path / f'tar.xyz', 'w') as f_tar:
-            n_pre = 0
-            n_tar = 0
-            for ele in prediction:
-                n_pre += len(prediction[ele])
-                n_tar += len(target[ele])
-            f_pre.write(f'{n_pre}\n')
-            f_pre.write('Lattice="25.0 0.0 0.0 0.0 25.0 0.0 0.0 0.0 7.0"\n')
-            f_tar.write(f'{n_tar}\n')
-            f_tar.write('Lattice="25.0 0.0 0.0 0.0 25.0 0.0 0.0 0.0 7.0"\n')
-
-            for ele in prediction:
-                pos_pre = prediction[ele][..., :3].dot(info['lattice'])
-                pos_tar = target[ele].dot(info['lattice'])
-                distance_array = np.sqrt(np.sum(np.square(np.expand_dims(pos_tar, axis=1) - np.expand_dims(pos_pre, axis=0)), axis=2))
-                while distance_array.shape[0] > 0 and distance_array.shape[1] > 0:
-                    index = np.unravel_index(np.argmin(distance_array), distance_array.shape)
-                    if distance_array[index] > ele2r[ele]:
-                        break
-                    # 移除配对的两个原子
-                    distance_array = np.delete(distance_array, index[0], axis=0)
-                    distance_array = np.delete(distance_array, index[1], axis=1)
-                    x_tar, y_tar, z_tar = pos_tar[index[0]]
-                    x_pre, y_pre, z_pre = pos_pre[index[1]]
-                    f_tar.write(f'{ele} {x_tar:.8f} {y_tar:.8f} {z_tar:.8f} {ele2color_cor[ele]}\n')
-                    f_pre.write(f'{ele} {x_pre:.8f} {y_pre:.8f} {z_pre:.8f} {ele2color_cor[ele]}\n')
-                    pos_tar = np.delete(pos_tar, index[0], axis=0)
-                    pos_pre = np.delete(pos_pre, index[1], axis=0)
-                for x_tar, y_tar, z_tar in pos_tar:
-                    f_tar.write(f'{ele} {x_tar:.8f} {y_tar:.8f} {z_tar:.8f} {ele2color_wor[ele]}\n')
-                for x_pre, y_pre, z_pre in pos_pre:
-                    f_pre.write(f'{ele} {x_pre:.8f} {y_pre:.8f} {z_pre:.8f} {ele2color_wor[ele]}\n')
-
+        with open(path, 'w') as f:
+            f.write(output)
+            
+        return
 
 def show_poscar(path_ovito,a, path_poscar):
     os.chdir(path_ovito)

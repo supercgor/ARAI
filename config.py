@@ -25,7 +25,7 @@ _C.setting.batch_size = 2
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.setting.pin_memory = True
 # Number of data loading threads
-_C.setting.num_workers = 0
+_C.setting.num_workers = 3
 # 0 for using one GPU or list for Parallel device idx, no cpu: []
 _C.setting.device = [0]
 # Training epochs
@@ -51,13 +51,16 @@ _C.model = CN()
 _C.model.checkpoint = "tune_3dunet"
 # use net
 _C.model.net = "TransUNet3D"
+_C.model.DET = ""
+_C.model.DISC = ""
+_C.model.GAN = ""
 # the init channels number
 _C.model.channels = 32
 # the size of input and output. (Z, X, Y)
 _C.model.inp_size = (16, 128, 128)
 _C.model.out_size = (4, 32, 32)
 # Threshold
-_C.model.threshold = 0.0
+_C.model.threshold = 0.7
 # NMS
 _C.model.nms = True
 
@@ -66,7 +69,7 @@ _C.model.nms = True
 # -----------------------------------------------------------------------------
 _C.data = CN()
 # use dataset
-_C.data.dataset = 'exp'
+_C.data.dataset = 'bulkice'
 # How many images will be used
 _C.data.img_use = 10
 # Element names
