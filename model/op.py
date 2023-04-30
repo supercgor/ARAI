@@ -1,6 +1,6 @@
 import torch
-import torch.nn as nn
-from torch.nn.functional import interpolate
+from torch import nn
+from torch.nn import functional as F
 from functools import partial
 
 def conv3d(in_channels, out_channels, kernel_size, bias, padding, stride = 1):
@@ -89,27 +89,7 @@ class SingleConv(nn.Sequential):
 
         for name, module in create_conv(in_channels, out_channels, kernel_size, order, num_groups = num_groups, padding = padding, stride= stride):
             self.add_module(name, module)
-
-class OutConv(nn.Sequential):
-    """
-    input layer should be conv first before the down sampling
-    """
-
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='gcl', num_groups=8, padding=1):
-        super(OutConv, self).__init__()
-        conv1_in_channels = in_channels
-        conv1_out_channels = in_channels // 2
-        conv2_in_channels, conv2_out_channels = conv1_out_channels, out_channels
-        # conv1
-        self.add_module('SingleConv1',
-                        SingleConv(conv1_in_channels, conv1_out_channels, kernel_size = kernel_size, order = order, num_groups = num_groups,
-                                   padding=padding))
-        # conv2
-        self.add_module('SingleConv2',
-                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size = kernel_size, order = order, num_groups = num_groups,
-                                   padding=padding))
-
-
+            
 class DoubleConv(nn.Sequential):
     """
     A module consisting of two consecutive convolution layers (e.g. BatchNorm3d+leakyReLU+Conv3d).
@@ -162,8 +142,7 @@ class DoubleConv(nn.Sequential):
                                    order = order, 
                                    num_groups = num_groups,
                                    padding=padding))
-
-
+        
 class Down(nn.Module):
     """
     construct a pooling + double conv or anything else
@@ -205,8 +184,7 @@ class Down(nn.Module):
             x = self.pooling(x)
         x = self.basic_module(x)
         return x
-
-
+    
 class Up(nn.Module):
     def __init__(self, in_channels, out_channels, conv_kernel_size=3, scale_factor=(2, 2, 2), basic_module=DoubleConv,
                  conv_layer_order='gcl', num_groups=8, mode='nearest', padding=1, upsample=True):
@@ -250,8 +228,7 @@ class Up(nn.Module):
             return torch.cat((encoder_features, x), dim=1)
         else:
             return encoder_features + x
-
-
+        
 class AbstractUpsampling(nn.Module):
     """
     Abstract class for upsampling. A given implementation should upsample a given 5D input tensor using either
@@ -269,6 +246,9 @@ class AbstractUpsampling(nn.Module):
         return self.upsample(x, output_size)
 
 
+# =============================================================================
+# Up sampling parts: Interpolate / TransposeConv / NoUpsampling
+
 class InterpolateUpsampling(AbstractUpsampling):
     """
     Args:
@@ -283,8 +263,7 @@ class InterpolateUpsampling(AbstractUpsampling):
 
     @staticmethod
     def _interpolate(x, size, mode):
-        return interpolate(x, size=size, mode=mode)
-
+        return F.interpolate(x, size=size, mode=mode)
 
 class TransposeConvUpsampling(AbstractUpsampling):
     """
@@ -313,33 +292,209 @@ class NoUpsampling(AbstractUpsampling):
     @staticmethod
     def _no_upsampling(x, size):
         return x
+    
+# =============================================================================
+# Super-Resolution Network: VapSR
+# Github: https://github.com/zhoumumu/VapSR
 
-
-class Out(nn.Module):
-    def __init__(self, in_channels=32, out_channels=8, kernel_size=3):
-        super(Out, self).__init__()
-        self.out = nn.Sequential(
-            nn.Conv3d(in_channels, 2 * in_channels, kernel_size,
-                      padding=1, padding_mode='replicate'),
-            nn.LeakyReLU(inplace=True),
-            nn.Conv3d(2 * in_channels, 2 * in_channels, kernel_size,
-                      padding=1, padding_mode='replicate'),
-            nn.LeakyReLU(inplace=True),
-            nn.MaxPool3d((1, 2, 2), stride=(1, 2, 2)),
-            nn.Conv3d(2 * in_channels, 4 * in_channels, kernel_size,
-                      padding=1, padding_mode='replicate'),
-            nn.LeakyReLU(inplace=True),
-            nn.Conv3d(4 * in_channels, 4 * in_channels, kernel_size,
-                      padding=1, padding_mode='replicate'),
-            nn.LeakyReLU(inplace=True),
-            nn.MaxPool3d((1, 2, 2), stride=(1, 2, 2)),
-            nn.Conv3d(4 * in_channels, 2 * in_channels, 1,
-                      padding=0, padding_mode='replicate'),
-            nn.LeakyReLU(inplace=True),
-            nn.Conv3d(2 * in_channels, out_channels, 1,
-                      padding=0, padding_mode='replicate'),
-        )
+class SwitchAttention(nn.Module):
+    def __init__(self, channels, dim = 3):
+        super().__init__()
+        if dim == 2:
+            conv = nn.Conv2d
+        elif dim == 3:
+            conv = nn.Conv3d
+            
+        self.pointwise = conv(in_channels = channels, out_channels = channels, kernel_size = 1)
+        self.depthwise = conv(in_channels = channels, out_channels = channels, kernel_size = 5, padding = 2, groups=channels)
+        self.depthwise_dilated = conv(in_channels = channels, out_channels = channels, kernel_size = 5, stride = 1, padding=6, groups = channels, dilation=3)
 
     def forward(self, x):
-        x = self.out(x)
+        u = x.clone()
+        attn = self.pointwise(x)
+        attn = self.depthwise(attn)
+        attn = self.depthwise_dilated(attn)
+        return u * attn
+
+class VAB(nn.Module):
+    """The basic module used in VapSR.
+    step 1: 1x1x1 Conv
+    step 2: attn (1x1x1 Conv + Depthwise Conv + 5x5x5 Depthwise dilated Conv)
+    step 3: attn * step 1
+    step 4: 1x1x1 Conv
+    step 5: add input
+    """
+    def __init__(self, in_channels, lattent):
+        super().__init__()
+        self.proj1 = nn.Conv3d(in_channels = in_channels, out_channels = lattent, kernel_size = 1)
+        self.act = nn.GELU()
+        self.attn = SwitchAttention(lattent)
+        self.proj2 = nn.Conv3d(in_channels = lattent, out_channels = in_channels, kernel_size = 1)
+        self.norm = nn.LayerNorm(in_channels)
+        # default_init_weights([self.pixel_norm], 0.1)
+
+    def forward(self, x):
+        shorcut = x.clone()
+        x = self.proj1(x)
+        x = self.act(x)
+        x = self.attn(x)
+        x = self.proj2(x)
+        x = x + shorcut
+
+        x = x.permute(0, 2, 3, 4, 1) # B, D, H, W, C
+        x = self.norm(x)
+        x = x.permute(0, 4, 1, 2, 3).contiguous() # B, C, D, H, W
+
         return x
+
+class PixelShuffle3d(nn.Module):
+    '''
+    This class is a 3d version of pixelshuffle.
+    ref: https://github.com/gap370/pixelshuffle3d
+    '''
+    def __init__(self, scale):
+        '''
+        :param scale: upsample scale
+        '''
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, input):
+        batch_size, channels, in_depth, in_height, in_width = input.size()
+        nOut = channels // self.scale ** 3
+
+        out_depth = in_depth * self.scale
+        out_height = in_height * self.scale
+        out_width = in_width * self.scale
+
+        input_view = input.contiguous().view(batch_size, nOut, self.scale, self.scale, self.scale, in_depth, in_height, in_width)
+
+        output = input_view.permute(0, 1, 5, 2, 6, 3, 7, 4).contiguous()
+
+        return output.view(batch_size, nOut, out_depth, out_height, out_width)
+
+def pixelshuffle(in_channels: torch.Tensor, out_channels: torch.Tensor, lattent: int = 256, scale: int = 2) -> nn.Sequential:
+    """Upsampling by pixel shuffle
+    :param in_channels: input channels
+    :param out_channels: output channels
+    :param lattent: used as the middle layer in order to reduce parameters, original paper: 64
+    :param scale: the scale factor, the lattent channels should be divided by scale ** 3
+    :return: nn.Sequential
+    
+    Example:
+      >>> a = torch.randn(1, 64, 16, 16, 16)
+      >>> b = pixelshuffle(64, 16)
+      >>> b(a).shape
+    Output:
+      >>> torch.Size([1, 16, 32, 32, 32])
+    """
+    
+    upconv1 = nn.Conv3d(in_channels = in_channels, out_channels = lattent, kernel_size = 3, stride = 1, padding = 1)
+    pixel_shuffle = PixelShuffle3d(scale)
+    upconv2 = nn.Conv3d(in_channels = lattent // (scale ** 3), out_channels = out_channels * (scale ** 3), kernel_size = 3, stride = 1, padding = 1)
+    lrelu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+    
+    return nn.Sequential(*[upconv1, pixel_shuffle, lrelu, upconv2, pixel_shuffle])
+
+# ============================================
+# CBAM module
+# CSDN: https://blog.csdn.net/weixin_38241876/article/details/109853433
+
+class ChannelAttentionModule(nn.Module):
+    def __init__(self, channels, ratio=16):
+        super(ChannelAttentionModule, self).__init__()
+        #使用自适应池化缩减map的大小，保持通道不变
+        self.avg_pool = nn.AdaptiveAvgPool3d(1)
+        self.max_pool = nn.AdaptiveMaxPool3d(1)
+ 
+        self.shared_MLP = nn.Sequential(
+            nn.Conv3d(in_channels = channels, out_channels = channels // ratio, kernel_size = 1, bias=False),
+            nn.ReLU(),
+            nn.Conv3d(in_channels = channels // ratio, out_channels = channels, kernel_size = 1, bias=False)
+        )
+        self.sigmoid = nn.Sigmoid()
+ 
+    def forward(self, x):
+        avgout = self.shared_MLP(self.avg_pool(x))
+        maxout = self.shared_MLP(self.max_pool(x))
+        return self.sigmoid(avgout + maxout)
+ 
+class SpatialAttentionModule(nn.Module):
+    def __init__(self):
+        super(SpatialAttentionModule, self).__init__()
+        self.conv = nn.Conv3d(in_channels = 2, out_channels = 1, kernel_size=7, stride=1, padding=3)
+        self.sigmoid = nn.Sigmoid()
+ 
+    def forward(self, x):
+        #map尺寸不变，缩减通道
+        avgout = torch.mean(x, dim=1, keepdim=True)
+        maxout, _ = torch.max(x, dim=1, keepdim=True)
+        out = torch.cat([avgout, maxout], dim=1)
+        out = self.sigmoid(self.conv(out))
+        return out
+ 
+class CBAM(nn.Module):
+    def __init__(self, channels):
+        super(CBAM, self).__init__()
+        self.channel_attention = ChannelAttentionModule(channels)
+        self.spatial_attention = SpatialAttentionModule()
+ 
+    def forward(self, x):
+        out = self.channel_attention(x) * x
+        out = self.spatial_attention(out) * out
+        return out
+    
+# ============================================
+# 3D image Self-Attention module
+# ref: https://github.com/heykeetae/Self-Attention-GAN
+
+class FullAttention(nn.Module):
+    """ Self attention Layer
+    Use 1x Conv to get the Query, Key, Value.
+    :param in_channels: input channels
+    :param dim: dimension, 2 for 2D image, 3 for 3D image
+    :param ratio: the ratio to reduce the channels
+    :param activation: activation function
+    
+    Example:
+        >>> a = torch.randn(1, 64, 16, 16, 16)
+        >>> b = FullAttention(64)
+        >>> b(a).shape
+    Output:
+        >>> torch.Size([1, 64, 16, 16, 16])"""
+    def __init__(self,in_channels: int , dim: int = 3, ratio: int = 8, activation: str = "relu"):
+        super(FullAttention,self).__init__()
+        self.chanel_in = in_channels
+        self.activation = activation
+        
+        if dim == 3:
+            conv = nn.Conv3d
+        elif dim == 2:
+            conv = nn.Conv2d
+        self.QConv = conv(in_channels = in_channels , out_channels = in_channels//ratio , kernel_size= 1)
+        self.KConv = conv(in_channels = in_channels , out_channels = in_channels//ratio , kernel_size= 1)
+        self.VConv = conv(in_channels = in_channels , out_channels = in_channels , kernel_size= 1)
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+        self.softmax  = nn.Softmax(dim=-1)
+        
+    def forward(self,x: torch.Tensor, attn_out: bool = False) -> torch.Tensor:
+        """forward attention
+        :params x: input feature maps B x C x (D) x W x H
+        :params attn_out: if True, return attention map
+        :return: attention value + input feature
+        """
+        B, C, *S = x.shape
+        Q  = self.QConv(x).flatten(2).permute(0,2,1) # B x N x C
+        K =  self.KConv(x).flatten(2) # B x C x N
+        V =  self.VConv(x).flatten(2) # B x C x N
+        energy =  torch.bmm(Q,K) # transpose check
+        attention = self.softmax(energy) # B x N x N 
+        out = torch.bmm(V, attention.permute(0,2,1))
+        out = out.view(B, C, *S)
+        out = self.gamma * out + x
+        
+        if attn_out:
+            return out,attention
+        else:
+            return out

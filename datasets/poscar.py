@@ -1,10 +1,9 @@
 import numpy as np
 import torch
 import os
-from pathlib import Path
 from collections import OrderedDict
-
-from utils.tools import read_POSCAR, read_file
+from typing import Dict, List
+from einops import rearrange
 
 class poscar():
     def __init__(self, 
@@ -59,24 +58,47 @@ class poscar():
                     X,Y,Z = map(float,f.readline().strip().split(" ")[0:3])
                     pos[e].append([Z * z, X * x, Y * y])
                 pos[e] = torch.tensor(pos[e])
-                pos[e][...,0].clip_(0,z - 0.00001)
-                pos[e][...,1].clip_(0,x - 0.00001)
-                pos[e][...,2].clip_(0,y - 0.00001)
+                pos[e][...,0].clip_(0,z - 1E-5)
+                pos[e][...,1].clip_(0,x - 1E-5)
+                pos[e][...,2].clip_(0,y - 1E-5)
         return {"scale": scale, "real_size": real_size, "elem": elem, "pos": pos}
     
     @classmethod
-    def pos2box(self, points_dict, real_size = (3, 25, 25), out_size = (4, 32, 32)):
+    def pos2box(cls, points_dict, real_size = (3, 25, 25), out_size = (8, 32, 32), order = ("O", "H")):
         scale = torch.tensor([i/j for i,j in zip(out_size, real_size)])
-        OUT = torch.zeros(len(points_dict), 4,*out_size)
-        for i, e in enumerate(points_dict):
+        OUT = torch.FloatTensor(*out_size, len(points_dict), 4).zero_()
+        for i, e in enumerate(order):
             POS = points_dict[e] * scale
             IND = POS.floor().int()
             offset = (POS - IND)
             ONE = torch.ones((offset.shape[0], 1))
-            offset = torch.cat((ONE, offset), dim = 1).T
-            OUT[i, :,IND[...,0],IND[...,1],IND[...,2]] = offset
-        return OUT.view(-1, *out_size).float()
-
+            offset = torch.cat((ONE, offset), dim = 1)
+            OUT[IND[...,0],IND[...,1],IND[...,2], i] = offset
+        return OUT
+    
+    #TODO
+    @classmethod
+    def pos2apprbox(self, points_dict, real_size = (3, 25, 25), out_size = (32, 128, 128), order = ("O", "H", None)):
+        scale = torch.tensor([i/j for i,j in zip(out_size, real_size)])
+        OUT = torch.Sparse.FloatTensor(*out_size, len(order)).zero_()
+        
+    @classmethod
+    def box2pos(cls, box, real_size = (3, 25, 25), order = ("O", "H"), threshold = 0.7, sort = True) -> Dict[str, torch.Tensor]:
+        D, H, W, E, C = box.shape
+        scale = torch.tensor([i/j for i,j in zip(real_size, (D, H, W))], device= box.device)
+        box = rearrange(box, 'd h w e c -> e d h w c')
+        pos = OrderedDict()
+        for i, e in enumerate(order):
+            pd_cls = box[i,...,0]
+            mask = pd_cls > threshold
+            pd_cls = pd_cls[mask]
+            pos[e] = torch.nonzero(mask) + box[i,...,1:][mask]
+            pos[e] = pos[e] * scale
+            if sort:
+                sort_ind = torch.argsort(pd_cls, descending=True)
+                pos[e] = pos[e][sort_ind]
+        return pos
+    
     def save(self, name, pos):
         output = ""
         output += f"{' '.join(self.elem)}\n"
@@ -129,19 +151,3 @@ class poscar():
             f.write(output)
             
         return
-
-def show_poscar(path_ovito,a, path_poscar):
-    os.chdir(path_ovito)
-    os.system(f'./ovito {a} {path_poscar}')
-
-
-def main():
-    path_ovito = r'D:\Software\OVITO Basic'
-    path = r'D:\data\afm_ml_2d_t220\test'
-
-    root_path = r'D:\data\afm_ml_2d_t220'
-    filenames = read_file(os.path.join(root_path, 'FileList'))
-
-
-if __name__ == '__main__':
-    main()

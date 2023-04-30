@@ -1,72 +1,135 @@
 import numpy as np
 import cv2
+import torch
+from torch import nn
 import torchvision.transforms as tf
+import random
+from torchvision.utils import make_grid, save_image
 
-def pixel_shift(img, shift):
-    dx, dy = shift
-    raw_shape = np.array(np.array(img.shape))
-    height, width = raw_shape
-    target = np.zeros((height, width))
-    y, x = np.indices(raw_shape)
-    x1 = np.clip(x + dx, 0, width - 1)
-    y1 = np.clip(y + dy, 0, height - 1)
-    target[y, x] = img[y1, x1]
-    return target
+class PixelShift(nn.Module):
+    def __init__(self, max_shift=(5, 5), fill=..., ref=5):
+        super().__init__()
+        self.max_shift = max_shift
+        self.fill = fill
+        self.ref = ref
 
-def cutout(img, rec_size=0.01, max_cut=3):
-    height = img.shape[0]
-    width = img.shape[1]
-    for _ in range(np.random.randint(0, max_cut)):
-        change_pixel = img.mean() * abs(np.random.normal(1, 0.2))
-        change_pixel = np.clip(np.int8(change_pixel), 0, 255)
+    def forward(self, x):  # shape (B ,C, X, Y)
+        for i in range(0, x.shape[0]):
+            if i == self.ref:
+                continue
+            shift = (random.randint(-self.max_shift[0], self.max_shift[0]),
+                     random.randint(-self.max_shift[1], self.max_shift[1]))
+            x[i] = torch.roll(x[i], shift, (1, 2))
+            if self.fill is not None:
+                fill = self._fill(x[i])
+                if shift[0] > 0:
+                    x[i, :, :shift[0], :] = fill
+                elif shift[0] < 0:
+                    x[i, :, shift[0]:, :] = fill
+                if shift[1] > 0:
+                    x[i, :, :, :shift[1]] = fill
+                elif shift[1] < 0:
+                    x[i, :, :, shift[1]:] = fill
+        return x
 
-        rec_size = np.random.uniform(0, rec_size)
-        max_size = int(height * width * rec_size)
-
-        new_height = np.clip(abs(np.random.normal(
-            np.sqrt(max_size) * 0.3, np.sqrt(max_size)*0.4)), 1, max_size)
-        new_height = max(1, new_height)
-        new_weight = max_size/new_height
-
-        new_height, new_weight = np.random.choice([new_height, new_weight], 2, replace = False)
-        y = np.random.randint(0, height)
-        x = np.random.randint(0, width)
-        
-        m_y = np.clip(new_height + y, 0, height - 1).astype(int)
-        y = np.clip(y, 0, height - 1)
-        m_x = np.clip(new_weight + x, 0, width - 1).astype(int)
-        x = np.clip(x, 0, width - 1)
-        img[y:m_y, x:m_x] = change_pixel
-    return img
+    def _fill(self, y):
+        if self.fill is ...:
+            return 0
+        elif self.fill == "mean":
+            return y.mean().item()
 
 
-def add_noise(img, max_c=0.1):
-    c = abs(np.random.normal(0, max_c))
-    c = np.clip(c, 0, max_c)
-    noisemode, addmode = np.random.randint(0, [1, 2])
-    if noisemode == 0:
-        noise = np.random.normal(loc=0, scale=1, size=img.shape)
-    elif noisemode == 1:
-        noise = 0.5 * c * (img.max() - img.min())
-        noise = np.random.uniform(-1 * noise, noise, img.shape)
+class CutOut(nn.Module):
+    def __init__(self, max_n=4, scale=(0.1, 0.9), ratio=0.02):
+        super().__init__()
+        self.max_n = max_n
+        self.ratio = ratio
+        self.scale = scale
 
-    if addmode == 0:  # noise overlaid over image
-        noisy = np.clip((img + noise * c * 255), 0, 255)
-    elif addmode == 1:  # noise multiplied by image
-        noisy = np.clip((img * (1 + noise * c)), 0, 255)
-    elif addmode == 2:  # noise multiplied by bottom and top half images
-        img2 = img / 255 * 2
-        noisy = np.clip(np.where(img2 <= 1, (img2 * (1 + noise * c)),
-                        (1 - img2 + 1) * (1 + noise * c) * -1 + 2) / 2, 0, 1)
-        noisy = noisy * 255
-    return noisy
+    def forward(self, x):
+        B, C, X, Y = x.shape
+        area = X * Y * 0.1
+        for i in range(B):
+            for _ in range(random.randint(0, self.max_n)):
+                use_area = random.randint(int(area * 0.1), int(area))
+                pos = (random.randint(0, X), random.randint(0, Y))
+                if random.randbytes(1):
+                    rd_x = random.randint(
+                        int(X * self.scale[0]), int(X * self.scale[1]))
+                    rd_y = use_area // rd_x
+                else:
+                    rd_y = random.randin(
+                        int(Y * self.scale[0]), int(Y * self.scale[1]))
+                    rd_x = use_area // rd_y
+                value = x[i].mean() * random.uniform(0.5, 1.5)
+                value.clip_(0, 1)
+                x[i, :, pos[0]-rd_x//2: pos[0]+rd_x//2,
+                    pos[1] - rd_y//2:pos[1]+rd_y//2] = value
+        return x
 
-def reduce_bnc(img, b = 0.2, c = 0.1):
-    contrast = np.clip(c * 255, 0, 255)
-    brightness = np.clip(b * 255, 0, 255)
-    output = img * (contrast/127 + 1) - contrast + brightness
-    output = np.clip(output, 0, 255).astype(np.uint8)
-    return output
+
+class Noisy(nn.Module):
+    def __init__(self, intensity=0.1, mode=["add", "times", None], noisy=["uniform", "normal"], add_factor=1):
+        super().__init__()
+        self.int = intensity
+        self.noisy = noisy
+        self.mode = mode
+        self.add_factor = add_factor
+
+    def forward(self, x):
+        for i in range(x.shape[0]):
+            noisy, mode = random.choice(self.noisy), random.choice(self.mode)
+            if mode is None:
+                continue
+            else:
+                noise = torch.FloatTensor(x.shape[1:])
+                if noisy == "normal":
+                    noise.normal_(0, self.int)
+                elif noisy == "uniform":
+                    noise.uniform_(-self.int, self.int)
+                if mode == "add":
+                    x[i].add_(noise * self.add_factor)
+                elif mode == "times":
+                    x[i].mul_(1 + noise)
+        x.clip_(0, 1)
+        return x
+
+
+class ColorJitter(nn.Module):
+    def __init__(self, B=0.3, C=0.3, S=0.0):
+        super().__init__()
+        self.J = tf.ColorJitter(brightness=B, contrast=C, saturation=S)
+
+    def forward(self, x):
+        for i in range(x.shape[0]):
+            x[i] = self.J(x[i])
+        return x
+
+class Blur(nn.Module):
+    def __init__(self, ksize=5, sigma=2.0):
+        super().__init__()
+        self.ksize = ksize
+        self.sigma = sigma
+        self.G = tf.GaussianBlur(ksize, sigma)
+
+    def forward(self, x):
+        for i in range(x.shape[0]):
+            x[i] = self.G(x[i])
+        return x
+
+stan_T = tf.Compose([
+        PixelShift(fill=None),
+        CutOut(),
+        Blur(),
+        tf.RandomApply([ColorJitter()], p = 0.5),
+        Noisy()
+        ])
 
 if __name__ == '__main__':
-    img = np.random.random((128, 128))
+    a = torch.load("/home/supercgor/gitfile/ARAI/datasets/data/bulkice/datapack/T160_1.npz")
+    r = [0,0,0,1,1,2,2,3,3,4,4,5,5,7,7,8]
+    IMGS = a['imgs'][r]
+    
+    stan_T(IMGS)
+    
+    save_image(make_grid(IMGS), "test.png")

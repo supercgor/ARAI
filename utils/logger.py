@@ -3,6 +3,8 @@ import logging.handlers
 import torch
 import os
 import tqdm
+from torchvision.utils import make_grid
+from einops import rearrange, repeat, reduce
 
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
@@ -27,69 +29,29 @@ class Logger():
 
     def epoch_info(self, epoch, train_dic, valid_dic):
         info = f"\nEpoch = {epoch}" + "\n"
-        info += f"Max memory use={torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB" + "\n"
-
-        info += "Train INFO:"
-        for met in train_dic.keys():
-            if met != "analyse" and train_dic[met].n != 0:
-                info += f" {met} = {train_dic[met]:.6f},"
-        info += "\n"
-        if "analyse" in train_dic:
-            for ele in train_dic["analyse"].keys():
-                info += f"{ele}:\n"
-                for low, up in train_dic["analyse"][ele].keys():
-                    info += f"\t({low}-{up}A):"
-                    for met_name in train_dic["analyse"][ele][(low, up)]:
-                        met = train_dic["analyse"][ele][(low, up)][met_name]()
-                        if isinstance(met, int):
-                            info += f" {met_name} = {met:8.0f},"
-                        else:
-                            info += f" {met_name} = {met:6.4f}"
-                    info += "\n"
+        info += f"Max memory use = {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB" + "\n"
         
-        info += "Valid INFO:"
-        for met in valid_dic.keys():
-            if met != "analyse" and valid_dic[met].n != 0:
-                info += f" {met} = {valid_dic[met]:.6f},"
-        info += "\n"
-        if "analyse":
-            for ele in valid_dic["analyse"].keys():
-                info += f"{ele}:\n"
-                for low, up in valid_dic["analyse"][ele].keys():
-                    info += f"\t({low}-{up}A):"
-                    for met_name in valid_dic["analyse"][ele][(low, up)]:
-                        met = valid_dic["analyse"][ele][(low, up)][met_name]()
-                        if isinstance(met, int):
-                            info += f" {met_name} = {met:8.0f},"
-                        else:
-                            info += f" {met_name} = {met:6.4f}"
-                    info += "\n"
-                        
+        for dic_name, dic in zip(["Train", "Valid"], [train_dic, valid_dic]):
+            info += f"{dic_name} INFO:"
+            for name, value in dic.items():
+                if name != "MET":
+                    info += f" {name} = {value:6.3f}"
+                    # value is ElemLayerMet
+            info += "\n"
+            if "MET" in dic:
+                value = dic["MET"]    
+                for e in value.elems:
+                    info += f"{e}"
+                    for l in value.split:
+                        info += f"\t{l}"
+                        for met_name, met_format, met in zip(value.met, value.format, value[e,l]):
+                            if met_format == "sum":
+                                info += f" {met_name} = {met:8.0f},"
+                            else:
+                                info += f" {met_name} = {met:6.4f}"
+                        info += "\n"
         self.info(info)
-
-    def test_info(self, test_dic):
-        info = f"\nTesting info" + "\n"
-        info += f"Max memory use={torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MB" + "\n"
-
-        for met in test_dic.keys():
-            if met != "analyse":
-                info += f" {met} = {test_dic[met]:.6f},"
-        info += "\n"
-        if "analyse" in test_dic:
-            for ele in test_dic["analyse"].keys():
-                info += f"{ele}:\n"
-                for low, up in test_dic["analyse"][ele].keys():
-                    info += f"\t({low}-{up}A):"
-                    for met_name in test_dic["analyse"][ele][(low, up)]:
-                        met = test_dic["analyse"][ele][(low, up)][met_name]()
-                        if isinstance(met, int):
-                            info += f" {met_name} = {met:8.0f},"
-                        else:
-                            info += f" {met_name} = {met:6.4f}"
-                    info += "\n"
-
-        self.info(info)
-
+        
     def get_logger(self, save_dir, log_name):
         logger_name = "Main"
         log_path = os.path.join(save_dir, log_name)
@@ -125,3 +87,17 @@ class Logger():
         logger.addHandler(console_handler)
         
         return logger
+
+def savetblogger(inputs, outputs, targets, logger, step, mode):
+    B, C, Z, X, Y = outputs.shape
+    t = targets[:B, :C, :Z, :X, :Y]
+    x = rearrange(inputs, "B C Z X Y -> B C X (Z Y)")
+    x = make_grid(x)
+    logger.add_image(f"{mode}/Input Image", x, global_step=step)
+    yp = rearrange(outputs, "B (C E) Z X Y -> C B 1 (E X) (Z Y)", C = 4)
+    yt = rearrange(t, "B (C E) Z X Y -> C B 1 (E X) (Z Y)", C = 4)
+    yp = yp[0,:2,...]
+    yt = yt[0,:2,...]
+    y = torch.cat([yp, yp, yt], dim = 1)
+    y = make_grid(y)
+    logger.add_image(f"{mode}/Out&Tag Image", y, global_step=step)

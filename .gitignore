@@ -8,6 +8,6 @@ debug*
 datasets/data/*
 !datasets/data/DATASETNAME/
 
-model/*/
+model/pretrain/*
 runs/*/
 debug.py

@@ -1,4 +1,3 @@
-
 split_layer = {
     "bulkice": [6,12],
     "HDA_3": [4,9],

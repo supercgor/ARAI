@@ -7,7 +7,15 @@ __version__ = "0.0.0"
 __date__    = "2022.11.05"
 __author__  = "Xu_Group"
 
+import torch
+from torch import nn
+import random
+import numpy as np
+from .metrics import *
 
-
-if __name__ == '__main__':
-    print("success")
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    return
