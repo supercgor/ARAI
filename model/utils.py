@@ -20,6 +20,8 @@ class basicParts():
             elif isinstance(m, nn.BatchNorm3d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
+        
+        return self
     
     def load(self, path, pretrained = False):
         state_dict = self.state_dict()
@@ -109,4 +111,5 @@ def structure(model):
     print('The total number of parameters: ' + str(num_para))
     print('The parameters of Model {}: {:4f}M'.format(
         model._get_name(), num_para * type_size / 1000 / 1000))
+    print(f'The memory used now: {torch.cuda.memory_allocated() / 1024 / 1024:.2f}MB')
     print('-' * 100)

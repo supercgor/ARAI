@@ -116,15 +116,23 @@ class Blur(nn.Module):
         for i in range(x.shape[0]):
             x[i] = self.G(x[i])
         return x
-
+    
 stan_T = tf.Compose([
         PixelShift(fill=None),
         CutOut(),
-        Blur(),
-        tf.RandomApply([ColorJitter()], p = 0.5),
-        Noisy()
+        tf.RandomApply([ColorJitter(B=(1.0,1.3))], p = 0.8),
+        Noisy(),
+        tf.RandomApply([Blur()], p = 0.9),
         ])
 
+random_T = tf.Compose([
+        tf.RandomApply([PixelShift(fill=None)], p = 0.7),
+        tf.RandomApply([CutOut()], p = 0.7),
+        tf.RandomApply([Blur()], p = 0.7),
+        tf.RandomApply([ColorJitter()], p = 0.3),
+        tf.RandomApply([Noisy()], p =0.7),
+        ])
+        
 if __name__ == '__main__':
     a = torch.load("/home/supercgor/gitfile/ARAI/datasets/data/bulkice/datapack/T160_1.npz")
     r = [0,0,0,1,1,2,2,3,3,4,4,5,5,7,7,8]

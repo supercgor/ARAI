@@ -83,7 +83,7 @@ class poscar():
         OUT = torch.Sparse.FloatTensor(*out_size, len(order)).zero_()
         
     @classmethod
-    def box2pos(cls, box, real_size = (3, 25, 25), order = ("O", "H"), threshold = 0.7, sort = True) -> Dict[str, torch.Tensor]:
+    def box2pos(cls, box, real_size = (3, 25, 25), order = ("O", "H"), threshold = 0.7, nms = True,sort = True) -> Dict[str, torch.Tensor]:
         D, H, W, E, C = box.shape
         scale = torch.tensor([i/j for i,j in zip(real_size, (D, H, W))], device= box.device)
         box = rearrange(box, 'd h w e c -> e d h w c')
@@ -97,6 +97,8 @@ class poscar():
             if sort:
                 sort_ind = torch.argsort(pd_cls, descending=True)
                 pos[e] = pos[e][sort_ind]
+        if nms:
+            pos = cls.nms(pos)
         return pos
     
     def save(self, name, pos):
@@ -125,6 +127,26 @@ class poscar():
 
     def save4npy(self, name, pred, NMS=True, conf=0.7):
         return self.save(name, self.npy2pos(pred, NMS=NMS, conf=conf))
+    
+    @classmethod
+    def nms(cls, pd_pos: Dict[str, torch.Tensor], radius: Dict[str, float] = {"O":0.8, "H":0.6}):
+        for e in pd_pos.keys():
+            pos = pd_pos[e]
+            if pos.nelement() == 0:
+                continue
+            if e == "O":
+                cutoff = radius[e] * 1.8
+            else:
+                cutoff = radius[e] * 1.8
+            DIS = torch.cdist(pos, pos)
+            DIS = DIS < cutoff
+            DIS = (torch.triu(DIS, diagonal= 1)).float()
+            restrain_tensor = DIS.sum(0)
+            restrain_tensor -= ((restrain_tensor != 0).float() @ DIS)
+            SELECT = restrain_tensor == 0
+            pd_pos[e] = pos[SELECT]
+            
+        return pd_pos
     
     @classmethod
     def pos2poscar(self, 

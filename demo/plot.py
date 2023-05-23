@@ -3,6 +3,7 @@ import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 import torch
+import einops
 from scipy.optimize import linear_sum_assignment
 from torch.nn import functional as F
 from torchvision.utils import make_grid, save_image
@@ -23,11 +24,24 @@ def out2img(x: torch.Tensor, y: torch.Tensor, out_size = (3,128,128)):
         IMGS.append(img)
     IMGS = make_grid(IMGS, nrow = 1)
     return IMGS
-    
-    
-    
-    
 
+def label2img(x: torch.Tensor, out_size = (4,32,32), format = "BZXYEC"):
+    if "B" in format:
+        x = x.select(dim = format.index("B"), index = 0)
+        format = format.replace("B", "")
+    if "C" in format:
+        x = x.select(dim = format.index("C"), index = 0)
+        format = format.replace("C", "")
+    format = " ".join(format)
+    x = x.clip(0,1)
+    x = einops.rearrange(x, f"{format} -> E Z X Y")
+    x = F.interpolate(x[None,...], size = out_size, mode = "trilinear")
+    x = x/ x.max()
+    # combine first and second dims -> (1 x (E x Z) x X x Y)
+    x = x.flatten(1,2)
+    x = x.permute(1,0,2,3)
+    return make_grid(x, nrow = out_size[0])
+    
 class ployView():
     def __init__(self):
         pass

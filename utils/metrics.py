@@ -105,7 +105,7 @@ class analyse_cls(nn.Module):
             pos = pd_pos[e]
             if pos.nelement() == 0:
                 continue
-            cutoff = self.radius[e] * 2
+            cutoff = self.radius[e] * 1.4
             DIS = torch.cdist(pos, pos)
             DIS = DIS < cutoff
             DIS = (torch.triu(DIS, diagonal= 1)).float()

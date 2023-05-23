@@ -117,32 +117,18 @@ class wassersteinLoss(nn.Module):
         self.register_buffer('fake_label', torch.tensor(fake_label))
 
     def forward(self, pred, real):
-        return self.alpha * ( pred - real )
+        return self.alpha * (pred - real).mean()
 
-class grad_penalty(nn.Module):
-    def __init__(self, alpha = 10, mix = False, net = None):
-        super(grad_penalty, self).__init__()
-        self.mix = mix
-        self.net = net
-        self.alpha = alpha
-        
-    def forward(self, inputs, other = ...):
-        B, C, Z, X, Y = inputs.shape
-        gp_w = torch.ones((B,), device = inputs.device)
-        if self.mix:
-            alpha = torch.rand(self.batch_size, device= inputs.device)
-            inputs = inputs.detach().requires_grad_(True)
-            alpha = repeat(torch.rand((B,), device = inputs.device), "B -> B C Z X Y", C = C, Z = Z, X = X, Y = Y)
-            inputs = inputs * alpha + (1 - alpha) * other
-            output = self.net(inputs)
-        else:
-            output = other
-        
-        gradients = grad(inputs=inputs, outputs=output, grad_outputs = gp_w, create_graph=True, retain_graph = ~self.mix)[0]
-            
-        gradients = gradients.view(B, -1)
-        gradients = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
-        return ((gradients - 1) ** 2).mean() * self.alpha
+def grad_penalty(net, real_fea, fake_fea):
+    B, C, Z, X, Y = real_fea.shape
+    alpha = torch.rand(B, device= real_fea.device)
+    mixed = torch.einsum("B, B C Z X Y -> B C Z X Y", alpha, real_fea) + torch.einsum("B, B C Z X Y -> B C Z X Y", 1 - alpha, fake_fea)
+    mixed.requires_grad_(True)
+    pred = net(mixed) # B,
+    gradients = grad(inputs=mixed, outputs = pred, create_graph=True, retain_graph = True, grad_outputs=torch.ones_like(pred))[0]
+    gradients = gradients.view(B, -1)
+    gradients = torch.sqrt(torch.sum(gradients ** 2, dim=1) + 1e-12)
+    return ((gradients - 1) ** 2).mean()
 
 # ============================================
 # Local Loss implementation

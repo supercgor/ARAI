@@ -4,6 +4,8 @@ import os
 import numpy as np
 import torch
 import cv2
+from typing import Tuple
+
 
 def read_file(file_name):
     data = []
@@ -15,39 +17,27 @@ def read_file(file_name):
                 data.append(fn2[0])
     return data
 
+
 class indexGen():
-    def __init__(self,
-                 use_len: int | None = 10,
-                 out_len: int = 16,
-                 split_border: tuple = (),
-                 split_ratio= ...,
-                 rand=False,
-                 ):
-
-        self.split_border = split_border
-        self.random = rand
-        if use_len is None:
-            use_len = out_len
-        if split_ratio is ...:
-            self.use_num = (use_len,)
-            self.out_num = (out_len,)
-        else:
-            self.use_num = self.weighted_split(use_len, split_ratio)
-            self.out_num = self.weighted_split(out_len, split_ratio)
-
-    def get(self,max_index = 20):
-        split = [0, *self.split_border, max_index]
-
+    @classmethod
+    def get(cls, use_len: int = 10,
+            out_len:int = 16,
+            max_index: int = 20,
+            split_border: None | Tuple[int] = None,
+            split_ratio: Tuple[int] = (0.4, 0.3, 0.3),
+            rand: bool = False):
+        split = split_border or []
+        split = [0, *split, max_index]
+        ratio = split_ratio[:len(split) - 1]
+        use_num = cls.weighted_split(use_len, ratio)
+        out_num = cls.weighted_split(out_len, ratio)
         use_indices = []
-        for i in range(len(split) - 1):
-            lower = split[i]
-            upper = split[i+1]
-            use = self.use_num[i]
-            out = self.out_num[i]
-            indices = sorted(random.sample(
-                range(lower, upper), k=min((upper - lower), use)))
-            use_indices.extend(indices[i] for i in self.gives_indices(
-                min((upper - lower), use), out, rand=self.random))
+        for lower, upper, use, out in zip(split[:-1], split[1:], use_num, out_num):
+            try:
+                indices = sorted(random.sample(range(lower, upper), k=min((upper - lower), use)))
+                use_indices.extend(indices[i] for i in cls.gives_indices(min((upper - lower), use), out, rand=rand))
+            except:
+                print(lower, upper, use, out, split, ratio, out_num)
         return use_indices
 
     @staticmethod
@@ -60,12 +50,15 @@ class indexGen():
 
     @staticmethod
     def gives_indices(upper, select_num, offset=0, rand=False):
+        assert upper > 0, f"Input is not valid: select_num = {select_num}, upper = {upper}"
         if rand:
+            
             sp = random.sample(range(upper), k=(select_num % upper))
             return [i + offset for i in range(upper) for _ in range(select_num // upper + (i in sp))]
         else:
             return [i + offset for i in range(upper) for _ in range((select_num // upper + ((select_num % upper) > i)))]
-        
+
+
 def read_pic(path: str,
              indices: list,
              img_size: tuple = (128, 128)
@@ -84,7 +77,7 @@ def read_pic(path: str,
             img = np.flip(img.T, axis=1)
             if img.shape != img_size and img_size is not None:
                 img = cv2.resize(img, img_size, interpolation=cv2.INTER_AREA)
-            img = img[None,...]
+            img = img[None, ...]
             last = i
         out = img.copy()
         IMG.append(out)

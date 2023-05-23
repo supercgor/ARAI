@@ -5,16 +5,10 @@ _C = CN()
 # Load settings
 # -----------------------------------------------------------------------------
 _C.path = CN()
-# the root of all file
-_C.path.root = '/home/supercgor/gitfile'
 # datasets path
-_C.path.data_root = '/home/supercgor/gitfile/ARAI/datasets/data'
+_C.path.data_root = '../data'
 # checkpoints path
-_C.path.check_root = '/home/supercgor/gitfile/ARAI/model/pretrain'
-# Save file dir
-_C.path.save_dir = ""
-# OVITO
-_C.path.ovito = ""
+_C.path.check_root = './model/pretrain'
 
 # -----------------------------------------------------------------------------
 # Default settings
@@ -22,6 +16,8 @@ _C.path.ovito = ""
 _C.setting = CN()
 # Batch size for a single GPU, could be overwritten by command line argument
 _C.setting.batch_accumulation = 1
+_C.setting.disc_accumulation = 3
+_C.setting.denoise_accumulation = 1
 _C.setting.batch_size = 1
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.setting.pin_memory = True
@@ -34,7 +30,7 @@ _C.setting.epochs = 50
 # Enable local loss after epoch
 _C.setting.local_epoch = 999
 # learning rate
-_C.setting.lr = 1.0e-4
+_C.setting.lr = 3.0e-4
 # Clip gradient norm
 _C.setting.clip_grad = 15.0
 # Max number of models to save
@@ -49,18 +45,19 @@ _C.setting.split = [0.0, 3.0]
 # -----------------------------------------------------------------------------
 _C.model = CN()
 # checkpoint name
-_C.model.checkpoint = "3A_ref"
+_C.model.checkpoint = ""
 # use net
-_C.model.fea = "O0.9812_H0.9232_0.0582_CP48.pkl"
-_C.model.neck = ""
-_C.model.head = ""
+_C.model.fea = ""
+_C.model.reg = ""
+_C.model.cyc = ""
+_C.model.denoise = ""
 # the init channels number
 _C.model.channels = 32
 # the size of input and output. (Z, X, Y)
 _C.model.inp_size = (16, 128, 128)
-_C.model.out_size = (8, 32, 32)
+_C.model.out_size = (4, 32, 32)
 # Threshold
-_C.model.threshold = 0.7
+_C.model.threshold = 0.5
 # NMS
 _C.model.nms = True
 
@@ -68,7 +65,7 @@ _C.model.nms = True
 # Data settings
 # -----------------------------------------------------------------------------
 _C.data = CN()
-# use dataset
+# use dataset smallice or bulkice
 _C.data.dataset = 'bulkice'
 # How many images will be used
 _C.data.img_use = 10
@@ -88,17 +85,17 @@ _C.data.pred_filelist = 'pred.filelist'
 # Criterion
 _C.criterion = CN()
 # Factor to increase the loss of positive sample
-_C.criterion.pos_weight = (25.0, 20.0)
+_C.criterion.pos_weight = (5.0, 5.0)
 # Weight of confidence
 _C.criterion.w_c = 1.0
 # Weight of offset in x-axis and y-axis
 _C.criterion.w_xy = 0.5
 # Weight of offset in z-axis
 _C.criterion.w_z = 0.5
+# Weight of wassersteinLoss loss
+_C.criterion.w_w = 0.1
 # Reduction of offset
 _C.criterion.reduction = 'mean'
-# Decay para
-_C.criterion.decay = [0.9, 0.7, 0.5, 0.3, 0.1, 0.05]
 
 # -----------------------------------------------------------------------------
 # Don't fill any thing here, this part is automatically filled
