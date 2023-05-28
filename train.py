@@ -1,8 +1,7 @@
 import time
-from tqdm import tqdm
+import os
+import tqdm
 from collections import OrderedDict
-import math
-
 
 import torch
 from torch import nn
@@ -12,30 +11,32 @@ from model import UNetModel, Regression
 from model.utils import basicParallel
 from itertools import chain
 
-from datasets.dataset import AFMDataset
-from utils.logger import Logger
-from utils.loader import Loader
+from datasets import AFMDataset
+from utils import *
 from utils.metrics import metStat, analyse_cls
 from utils.criterion import modelLoss
 from utils.schedular import Scheduler
-from demo.plot import out2img
 
+if os.environ.get("USER") == "supercgor":
+    from config.config import get_config
+else:
+    from config.wm import get_config
 
 class Trainer():
-    def __init__(self, cfg):
+    def __init__(self):
+        cfg = get_config()
         self.cfg = cfg
 
         assert cfg.setting.device != [], "No device is specified!"
-
-        self.load_dir, self.work_dir = Loader(cfg, make_dir=True)
-
+        
+        self.work_dir = f"{cfg.path.check_root}/Train_{time.strftime('%Y%m%d-%H%M%S', time.localtime())}"
+        os.makedirs(self.work_dir, exist_ok=True)
+        
         self.logger = Logger(path=self.work_dir,
-                             elem=cfg.data.elem_name, split=cfg.setting.split)
+                             elem=cfg.data.elem_name, 
+                             split=cfg.setting.split)
 
-        self.tb_writer = SummaryWriter(
-            log_dir=f"{self.work_dir}/runs/{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
-
-        log = []
+        self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/train")
 
         # load the feature extractor network
         self.net = UNetModel(image_size=(16, 128, 128),
@@ -53,25 +54,22 @@ class Trainer():
         
         self.logger.info(f"UNet parameters: {sum([p.numel() for p in self.net.parameters()])}")
         
+        # load the regression network
         self.reg = Regression(in_channels=32, out_channels=8).cuda()
         self.logger.info(f"Reg parameters: {sum([p.numel() for p in self.reg.parameters()])}")
 
+        log = []
+        
         try:
-            path = f"{self.load_dir}/{self.cfg.model.fea}"
-            match_list = self.net.load(path, pretrained=True)
-            match_list = "\n".join(match_list)
-            log.append(f"Load parameters from {self.load_dir}")
-            log.append(f"\n{match_list}")
+            log.extend(self.net.load(f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}", pretrained=True))
+            log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.fea}")
         except (FileNotFoundError, IsADirectoryError):
             log.append(
                 f"No network is loaded, start a new model: {self.net.name}")
             
         try:
-            path = f"{self.load_dir}/{self.cfg.model.reg}"
-            match_list = self.reg.load(path, pretrained=True)
-            match_list = "\n".join(match_list)
-            log.append(f"Load parameters from {self.load_dir}")
-            log.append(f"\n{match_list}")
+            log.extend(self.reg.load(f"{cfg.path.check_root}/{cfg.model.checkpoint}/{self.cfg.model.reg}", pretrained=True))
+            log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.reg}")
         except (FileNotFoundError, IsADirectoryError):
             log.append(
                 f"No regression network is loaded, start a new model: {self.reg.name}")
@@ -81,9 +79,16 @@ class Trainer():
             self.reg = basicParallel(self.reg, device_ids = cfg.setting.device)
 
         self.analyse = analyse_cls(threshold=cfg.model.threshold).cuda()
-        self.LOSS = modelLoss(threshold=cfg.model.threshold, pos_w=cfg.criterion.pos_weight).cuda()
-        self.OPT = torch.optim.AdamW(chain(self.net.parameters(), self.reg.parameters()), lr=self.cfg.setting.lr, weight_decay=5e-3)
+        
+        self.LOSS = modelLoss(pos_w=cfg.criterion.pos_weight).cuda()
+        
+        self.OPT = torch.optim.AdamW(
+            chain(self.net.parameters(), self.reg.parameters()), 
+            lr=self.cfg.setting.lr, 
+            weight_decay=5e-3)
+        
         self.SCHEDULER = Scheduler(self.OPT, warmup_steps=5, decay_factor=50000)
+        
         for l in log:
             self.logger.info(l)
 
@@ -92,7 +97,7 @@ class Trainer():
 
         train_data = AFMDataset(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}",
                                 self.cfg.data.elem_name,
-                                file_list=self.cfg.data.train_filelist,
+                                file_list= "train.filelist",
                                 img_use=self.cfg.data.img_use,
                                 model_inp=self.cfg.model.inp_size,
                                 model_out=self.cfg.model.out_size)
@@ -105,7 +110,7 @@ class Trainer():
 
         valid_data = AFMDataset(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}",
                                 self.cfg.data.elem_name,
-                                file_list=self.cfg.data.valid_filelist,
+                                file_list= "valid.filelist",
                                 img_use=self.cfg.data.img_use,
                                 model_inp=self.cfg.model.inp_size,
                                 model_out=self.cfg.model.out_size)
@@ -123,17 +128,14 @@ class Trainer():
 
         for epoch in range(1, self.cfg.setting.epochs + 1):
             epoch_start_time = time.time()
-
+            
             log_train_dic = self.train(epoch)
 
-            if True:  # Can add some condition
-                log_valid_dic = self.valid(epoch)
-            else:
-                log_valid_dic = {}
+            log_valid_dic = self.valid(epoch)
 
             self.logger.epoch_info(epoch, log_train_dic, log_valid_dic)
 
-            for dic_name, dic in zip(["Train", "Valid"], [log_train_dic, log_valid_dic]):
+            for dic_name, dic in (("Train", log_train_dic), ("Valid", log_valid_dic)):
                 for key, MET in dic.items():
                     if key != 'MET':
                         self.tb_writer.add_scalar(
@@ -183,8 +185,7 @@ class Trainer():
 
         T_dict = self.get_dict()
 
-        pbar = tqdm(total=iter_times - 1,
-                    desc=f"Epoch {epoch} - Train", position=0, leave=True, unit='it')
+        pbar = tqdm.tqdm(total=iter_times - 1, desc = f"Epoch {epoch} - Train", position=0, leave=True, unit='it')
 
         i = 0
         while i < iter_times:
@@ -223,8 +224,11 @@ class Trainer():
             if step % 100 == 0:
                 self.tb_writer.add_images(
                     "Train/In IMG", imgs[0].permute(1, 0, 2, 3), step)
-                self.tb_writer.add_image(
-                    "Train/OUT BOX", out2img(pd_box, gt_box), step)
+                # print(pd_box.shape)
+                pd_img = label2img(pd_box, format = "BZXYEC", use_sigmoid= False)
+                # print(pd_img.shape)
+                self.tb_writer.add_images(
+                    "Train/OUT BOX (Blue: ground truth, Yellow: prediction)", torch.stack([label2img(pd_box, format = "BZXYEC", use_sigmoid= False)] * 2 + [label2img(gt_box, format = "BZXYEC", use_sigmoid= False)], dim = 1), step)
 
             self.tb_writer.add_scalar(
                 f"TRAIN/LR_rate", self.OPT.param_groups[0]['lr'], step)
@@ -256,8 +260,7 @@ class Trainer():
         
         T_dict = self.get_dict()
 
-        pbar = tqdm(total=len_loader - 1,
-                    desc=f"Epoch {epoch} -  Valid", position=0, leave=True, unit='it')
+        pbar = tqdm.tqdm(total=len_loader - 1, desc=f"Epoch {epoch} -  Valid", position=0, leave=True, unit='it')
 
         i = 0
         while i < len_loader:
@@ -299,16 +302,16 @@ class Trainer():
             self.best_met = met
 
             log = []
-            try:
-                name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
-                self.net.save(path=f"{self.work_dir}/unet_{name}")
-                self.reg.save(path=f"{self.work_dir}/reg_{name}")
-                log.append(f"Saved a new net: {name}")
-            except AttributeError:
-                pass
+            name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
+            self.net.save(path=f"{self.work_dir}/unet_{name}")
+            self.reg.save(path=f"{self.work_dir}/reg_{name}")
+            log.append(f"Saved a new net: {name}")
 
             for i in log:
                 logger.info(i)
 
         else:
             logger.info(f"No model was saved")
+
+if __name__ == "__main__":
+    Trainer().fit()

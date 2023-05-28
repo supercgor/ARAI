@@ -56,8 +56,8 @@ class basicParts():
         torch.save(state_dict, path)
         if not ignore:
             if path in self.save_model:
-                    self.save_model.remove(path)
-            elif len(self.save_model) == self.save_num:
+                self.save_model.remove(path)
+            elif len(self.save_model) >= self.save_num:
                 os.remove(self.save_model.pop(0))
             self.save_model.append(path)
     

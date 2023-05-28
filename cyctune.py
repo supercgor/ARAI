@@ -1,43 +1,45 @@
 import time
-from tqdm import tqdm
+import os
+import tqdm
 from collections import OrderedDict
-from itertools import chain
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-import model
-import random
+from model import UNetModel, Regression
+from model.utils import basicParallel
+from itertools import chain
 
-
-from datasets.dataset import AFMDataset
-from utils.logger import Logger
-from utils.loader import Loader
+from datasets import AFMDataset
+from utils import *
 from utils.metrics import metStat, analyse_cls
 from utils.criterion import modelLoss
 from utils.schedular import Scheduler
-from demo.plot import out2img
 
-class Tuner():
-    def __init__(self, cfg):
+if os.environ.get("USER") == "supercgor":
+    from config.config import get_config
+else:
+    from config.wm import get_config
+
+class Trainer():
+    def __init__(self):
+        cfg = get_config()
         self.cfg = cfg
-        
+
         assert cfg.setting.device != [], "No device is specified!"
-
-        self.load_dir, self.work_dir = Loader(cfg, make_dir=True)
-
+        
+        self.work_dir = f"{cfg.path.check_root}/Train_{time.strftime('%Y%m%d-%H%M%S', time.localtime())}"
+        os.makedirs(self.work_dir, exist_ok=True)
+        
         self.logger = Logger(path=self.work_dir,
                              elem=cfg.data.elem_name, 
-                             split=cfg.setting.split,
-                             log_name = "tune.log")
+                             split=cfg.setting.split)
 
-        self.tb_writer = SummaryWriter(
-            log_dir=f"{self.work_dir}/runs/Tuner_{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}")
+        self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/train")
 
-        log = []
-        self.net = model.UNetModel(image_size=(16, 128, 128),
+        # load the feature extractor network
+        self.net = UNetModel(image_size=(16, 128, 128),
                              in_channels=1,
                              model_channels=32,
                              out_channels=32,
@@ -49,19 +51,14 @@ class Tuner():
                              num_heads = 4,
                              time_embed=None,
                              use_checkpoint=False).cuda()
-
+        
         self.logger.info(f"UNet parameters: {sum([p.numel() for p in self.net.parameters()])}")
         
-        try:
-            path = f"{self.load_dir}/{self.cfg.model.fea}"
-            match_list = self.net.load(path, pretrained=True)
-            match_list = "\n".join(match_list)
-            log.append(f"Load parameters from {self.load_dir}")
-            log.append(f"\n{match_list}")
-        except (FileNotFoundError, IsADirectoryError):
-            raise FileNotFoundError(f"No network is loaded, stop tunning: {self.net.name}")
-            
-        self.cyc = model.UNetModel(image_size = (16, 128, 128), 
+        # load the regression network
+        self.reg = Regression(in_channels=32, out_channels=8).cuda()
+        self.logger.info(f"Reg parameters: {sum([p.numel() for p in self.reg.parameters()])}")
+
+        self.cyc = UNetModel(image_size = (16, 128, 128), 
               in_channels = 1, 
               model_channels = 32,
               out_channels = 1,
@@ -74,41 +71,49 @@ class Tuner():
               use_checkpoint=False).cuda()
         
         self.logger.info(f"CycUNet parameters: {sum([p.numel() for p in self.cyc.parameters()])}")
-        
-        try:
-            path = f"{self.load_dir}/{self.cfg.model.cyc}"
-            match_list = self.cyc.load(path, pretrained=True)
-            match_list = "\n".join(match_list)
-            log.append(f"Load parameters from {self.load_dir}")
-            log.append(f"\n{match_list}")
-        except (FileNotFoundError, IsADirectoryError):
-            raise FileNotFoundError(f"No Cycler is loaded, stop tunning: {self.cyc.name}")
-        
-        self.reg = model.Regression(in_channels=32, out_channels=8).cuda()
-        self.logger.info(f"Reg parameters: {sum([p.numel() for p in self.reg.parameters()])}")
-        
-        try:
-            path = f"{self.load_dir}/{self.cfg.model.reg}"
-            match_list = self.reg.load(path, pretrained=True)
-            match_list = "\n".join(match_list)
-            log.append(f"Load parameters from {self.load_dir}")
-            log.append(f"\n{match_list}")
-        except (FileNotFoundError, IsADirectoryError):
-            raise FileNotFoundError(f"No regression network is loaded, stop tunning: {self.reg.name}")
 
-        if len(cfg.setting.device) >= 2:
-            self.net = model.utils.basicParallel(self.net, device_ids=cfg.setting.device)
-            self.cyc = model.utils.basicParallel(self.cyc, device_ids=cfg.setting.device)
-            self.reg = model.utils.basicParallel(self.reg, device_ids = cfg.setting.device)
+        log = []
         
+        try:
+            log.extend(self.net.load(f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}", pretrained=True))
+            log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.fea}")
+        except (FileNotFoundError, IsADirectoryError):
+            raise FileNotFoundError(f"No feature extractor network is loaded at '{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}'")
+
+            
+        try:
+            log.extend(self.reg.load(f"{cfg.path.check_root}/{cfg.model.checkpoint}/{self.cfg.model.reg}", pretrained=True))
+            log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.reg}")
+        except (FileNotFoundError, IsADirectoryError):
+            raise FileNotFoundError(f"No regression network is loaded at '{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.reg}'")
+        
+        try:
+            log.extend(self.cyc.load(f"{cfg.path.check_root}/{cfg.model.checkpoint}/{self.cfg.model.cyc}", pretrained=True))
+            log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.cyc}")
+        except (FileNotFoundError, IsADirectoryError):
+            raise FileNotFoundError(f"No cycle network is loaded at '{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.cyc}'")
+        
+        if len(cfg.setting.device) >= 2:
+            self.net = basicParallel(self.net, device_ids = cfg.setting.device)
+            self.reg = basicParallel(self.reg, device_ids = cfg.setting.device)
+            self.cyc = basicParallel(self.cyc, device_ids = cfg.setting.device)
+
         self.net.train()
+        self.reg.train()
         self.cyc.eval()
         self.cyc.requires_grad_(False)
-        
+
         self.analyse = analyse_cls(threshold=cfg.model.threshold).cuda()
-        self.LOSS = modelLoss(threshold=cfg.model.threshold, pos_w=cfg.criterion.pos_weight).cuda()
-        self.OPT = torch.optim.AdamW(chain(self.net.parameters(), self.reg.parameters()), lr=self.cfg.setting.lr, weight_decay=5e-3)
+        
+        self.LOSS = modelLoss(pos_w=cfg.criterion.pos_weight).cuda()
+        
+        self.OPT = torch.optim.AdamW(
+            chain(self.net.parameters(), self.reg.parameters()), 
+            lr=self.cfg.setting.lr, 
+            weight_decay=5e-3)
+        
         self.SCHEDULER = Scheduler(self.OPT, warmup_steps=5, decay_factor=50000)
+        
         for l in log:
             self.logger.info(l)
 
@@ -117,7 +122,7 @@ class Tuner():
 
         train_data = AFMDataset(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}",
                                 self.cfg.data.elem_name,
-                                file_list=self.cfg.data.train_filelist,
+                                file_list= "train.filelist",
                                 img_use=self.cfg.data.img_use,
                                 model_inp=self.cfg.model.inp_size,
                                 model_out=self.cfg.model.out_size)
@@ -130,7 +135,7 @@ class Tuner():
 
         valid_data = AFMDataset(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}",
                                 self.cfg.data.elem_name,
-                                file_list=self.cfg.data.valid_filelist,
+                                file_list= "valid.filelist",
                                 img_use=self.cfg.data.img_use,
                                 model_inp=self.cfg.model.inp_size,
                                 model_out=self.cfg.model.out_size)
@@ -139,26 +144,23 @@ class Tuner():
                                        batch_size=self.cfg.setting.batch_size,
                                        num_workers=self.cfg.setting.num_workers,
                                        pin_memory=self.cfg.setting.pin_memory)
-     
+
         self.best = {'loss': metStat(mode="min")}
         self.best_met = 9999
 
         # --------------------------------------------------
-        self.logger.info(f'Start tunning.')
+        self.logger.info(f'Start training.')
 
         for epoch in range(1, self.cfg.setting.epochs + 1):
             epoch_start_time = time.time()
-
+            
             log_train_dic = self.train(epoch)
 
-            if True:  # Can add some condition
-                log_valid_dic = self.valid(epoch)
-            else:
-                log_valid_dic = {}
+            log_valid_dic = self.valid(epoch)
 
             self.logger.epoch_info(epoch, log_train_dic, log_valid_dic)
 
-            for dic_name, dic in zip(["Train", "Valid"], [log_train_dic, log_valid_dic]):
+            for dic_name, dic in (("Train", log_train_dic), ("Valid", log_valid_dic)):
                 for key, MET in dic.items():
                     if key != 'MET':
                         self.tb_writer.add_scalar(
@@ -167,10 +169,9 @@ class Tuner():
                         # log Metrics dict
                         for e in MET.elems:
                             self.tb_writer.add_scalars(
-                                f"EPOCH/{dic_name} {e} COUNT", {f"{met_name} {l}": MET[e, i, met_name] for i,l in enumerate(MET.split) for met_name in ["TP", "FP", "FN", "T", "P"]}, epoch)
+                                f"EPOCH/{dic_name} {e} COUNT", {f"{met_name} {l}": MET[e, i, met_name] for i, l in enumerate(MET.split) for met_name in ["TP", "FP", "FN", "T", "P"]}, epoch)
                             self.tb_writer.add_scalars(
-                                f"EPOCH/{dic_name} {e} AP/AR", {f"{met_name} {l}": MET[e, i, met_name] for i,l in enumerate(MET.split) for met_name in ["AP", "AR"]}, epoch)
-                            
+                                f"EPOCH/{dic_name} {e} AP/AR", {f"{met_name} {l}": MET[e, i, met_name] for i, l in enumerate(MET.split) for met_name in ["AP", "AR"]}, epoch)
             # ---------------------------------------------
             # Saver here
 
@@ -183,35 +184,33 @@ class Tuner():
 
         # --------------------------------------------------
 
-        self.logger.info(f'End tunning.')
-
+        self.logger.info(f'End training.')
 
     @staticmethod
     def get_dict():
         T_dict = OrderedDict(
-            Grad =metStat(mode="mean"),
-            Loss =metStat(mode="mean"),
-        )
-        
+            Grad=metStat(mode="mean"),
+            Loss=metStat(mode="mean"))
+
         return T_dict
-    
+
     def train(self, epoch):
         # -------------------------------------------
-        # for some reasons, daaccu >= accu
+
         accu = self.cfg.setting.batch_accumulation
-        
+
         iter_times = len(self.train_loader) // accu
-                
+        
         it_loader = iter(self.train_loader)
 
         self.net.train()
         self.reg.train()
 
-        # -------------------------------------------
+        # ----------------------------- --------------
 
         T_dict = self.get_dict()
 
-        pbar = tqdm(total=iter_times - 1, desc=f"Epoch {epoch} - Tune", position=0, leave=True, unit='it')
+        pbar = tqdm.tqdm(total=iter_times - 1, desc = f"Epoch {epoch} - Train", position=0, leave=True, unit='it')
 
         i = 0
         while i < iter_times:
@@ -251,8 +250,9 @@ class Tuner():
             if step % 100 == 0:
                 self.tb_writer.add_images(
                     "Train/In IMG", imgs[0].permute(1, 0, 2, 3), step)
+                
                 self.tb_writer.add_image(
-                    "Train/OUT BOX", out2img(pd_box, gt_box), step)
+                    "Train/OUT BOX", torch.stack([label2img(pd_box, format = "BZXYEC")] * 2 + [label2img(gt_box, format = "BZXYEC")], dim = 1), step)
 
             self.tb_writer.add_scalar(
                 f"TRAIN/LR_rate", self.OPT.param_groups[0]['lr'], step)
@@ -284,8 +284,7 @@ class Tuner():
         
         T_dict = self.get_dict()
 
-        pbar = tqdm(total=len_loader - 1,
-                    desc=f"Epoch {epoch} -  Valid", position=0, leave=True, unit='it')
+        pbar = tqdm.tqdm(total=len_loader - 1, desc=f"Epoch {epoch} -  Valid", position=0, leave=True, unit='it')
 
         i = 0
         while i < len_loader:
@@ -293,8 +292,6 @@ class Tuner():
             imgs, gt_box, filenames = next(it_loader)
 
             imgs = imgs.cuda(non_blocking=True)
-            imgs = random.choice([lambda x: x, self.cyc])(imgs)
-            
             gt_box = gt_box.cuda(non_blocking=True)
             pd_box = self.reg(self.net(imgs))
 
@@ -329,16 +326,16 @@ class Tuner():
             self.best_met = met
 
             log = []
-            try:
-                name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
-                self.net.save(path=f"{self.work_dir}/unet_{name}")
-                self.reg.save(path=f"{self.work_dir}/reg_{name}")
-                log.append(f"Saved a new net: {name}")
-            except AttributeError:
-                pass
+            name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
+            self.net.save(path=f"{self.work_dir}/unet_{name}")
+            self.reg.save(path=f"{self.work_dir}/reg_{name}")
+            log.append(f"Saved a new net: {name}")
 
             for i in log:
                 logger.info(i)
 
         else:
             logger.info(f"No model was saved")
+
+if __name__ == "__main__":
+    Trainer().fit()

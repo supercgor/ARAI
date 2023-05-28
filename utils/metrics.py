@@ -1,13 +1,10 @@
 import torch
 import numpy as np
 from torch import nn
-from torch.nn import functional as F
-from collections import OrderedDict
-from datasets.poscar import poscar
+from datasets import poscar
 from typing import Tuple, Dict
 from collections.abc import Iterable
 import math
-from einops import rearrange, repeat
 
 class analyse_cls(nn.Module):
     """Analysing the result of the model
@@ -71,34 +68,6 @@ class analyse_cls(nn.Module):
             match = self.match(pd, gt) # Dict[str, tuple]: (T, P, TP, FP, FN, AP, AR, SUC)
             self.elm = self.elm + match
         return match
-
-    def select(x, threshold = 0.7, sort = True):
-        mask = (x[..., 0] > threshold)
-        out = x[mask]
-        if sort:
-            out = out[out[..., 0].argsort(descending=True)]
-        return out
-    
-    def select(self, pd):
-        """Select all the prediction points
-        :param pd: the prediction of the model, shape: (Z, X, Y, C)
-        :return: pd_conf: the confidence of the prediction, shape: (N, )
-        :return: pd_pos: the position index of the prediction, shape: (N, 3)
-        """
-        pd_clss = torch.argmax(pd, dim = -1)
-        out = {}
-        for i, e in enumerate(self.elements):
-            if e is None:
-                continue
-            mask = pd_clss == i
-            pd_conf = pd[mask]
-            pd_pos = mask.nonzero()
-            if self.SORT:
-                order = torch.argsort(pd_conf, descending = True)
-                pd_conf = pd_conf[order]
-                pd_pos = pd_pos[order]
-            out[e] = (pd_conf, pd_pos)
-        return out
         
     def nms(self, pd_pos: Dict[str, torch.Tensor]):
         for e in pd_pos.keys():
@@ -278,7 +247,7 @@ class metStat():
                 raise TypeError(f"{type(xs)} is not an iterable")
           
     def __repr__(self):
-        return f"{self._value.item():.4f}, mode: {self._mode}, len: {self.n}"
+        return f"{self._value.item()}"
     
     def __call__(self):
         return self._value.item()
@@ -307,186 +276,3 @@ class metStat():
     @property
     def last(self):
         return self._last
-
-
-class analyse(nn.Module):
-    def __init__(self, 
-                 out_size = (4, 32, 32),                # output size of the model box ( Z * X * Y )
-                 real_size = (3, 25, 25),               # real size of the box
-                 scale = 1.4,                           # allow the radius become larger
-                 threshold = 0.7,                       # the cutoff threshold
-                 sort: bool = True,                     # sort the points according to the confidence
-                 nms: bool = True,                      # use nms or not
-                 split = (0, 3.0),                      # the boundary of the layer
-                 d: OrderedDict = ...                   # radius of the atoms
-                 ):
-        super(analyse, self).__init__()
-        if d is Ellipsis:
-            d = OrderedDict(O = 0.740, H = 0.528)
-        
-        self.D = d
-        self.S = split
-        self._nms = nms
-        self._scale = scale
-        self._toSort = sort
-
-        expand = (1, ) + tuple(j/i for i,j in zip(out_size, real_size))
-        self.register_buffer("scale_factor", torch.tensor(expand))
-        IND = torch.ones(1, *out_size).nonzero().T
-        self.register_buffer("IND", IND)
-        
-        self.threshold = threshold
-        
-        # "O" : (0.0, 1.0) : TP, FP, FN,... 2d dict
-        self.init_met()
-        
-        self.init()
-        
-    def init(self):
-        self._P = OrderedDict((key, []) for key in self.D.keys())
-        self._T = OrderedDict((key, []) for key in self.D.keys())
-        self._TP = OrderedDict((key, []) for key in self.D.keys())
-        self._FP = OrderedDict((key, []) for key in self.D.keys())
-        self._FN = OrderedDict((key, []) for key in self.D.keys())
-
-    def init_met(self):
-        self._met = {e : {(low,up):{f"{key}": metStat(mode = m, dtype= dtp) 
-                     for key,m, dtp in [("ACC", "mean", torch.float32), ("SUC", "mean", torch.float32), ("TP", "sum", torch.int64), ("FP", "sum", torch.int64), ("FN", "sum", torch.int64)] 
-                     } for low,up in zip(self.S[:-1], self.S[1:])} for e in self.D.keys()}
-    
-    def forward(self, predictions, targets):
-        if predictions.dim() == 4:
-            predictions = predictions[None,...]
-            targets = targets[None,...]
-        B, C, Z, X, Y = predictions.shape
-        targets = targets[:B,:C,:Z,:X,:Y]
-        
-        preds = self.organize(predictions, ind = self.IND, scale = self.scale_factor)
-        targs = self.organize(targets, ind = self.IND, scale = self.scale_factor)
-        
-        for B , (Pred, Targ) in enumerate(zip(preds, targs)):
-            for e, pred, targ in zip(self.D.keys() ,Pred, Targ):
-                P = self.select(pred, threshold= self.threshold, sort = self._toSort)[:,1:]
-                T = self.select(targ, threshold= 0.5, sort = False)[:,1:]
-                if self._nms:
-                    P, _ = self.nms(P, self.D[e] * self._scale)
-                
-                TP, FP, FN = self.match(P, T, 0.5)
-                self.record(e, P, T, TP, FP, FN)
-    
-    def record(self, elem, P, T, TP, FP, FN):
-        self._P[elem].append(P)
-        self._T[elem].append(T)
-        self._TP[elem].append(TP)
-        self._FP[elem].append(FP)
-        self._FN[elem].append(FN)
-    
-    def compute(self):
-        period = tuple(zip(self.S[: -1], self.S[1: ]))
-        for e in self.D.keys():
-            for TP, FP, FN in zip(self._TP[e], self._FP[e], self._FN[e]):
-                TP, FP, FN = map(lambda x: self.split(x, self.S), [TP, FP, FN])
-                for layer, tp, fp, fn in zip(period, TP, FP, FN):
-                    acc = tp.shape[0]/(tp.shape[0] + fp.shape[0] + fn.shape[0])
-                    suc = acc == 1
-                    for idt_name, idt in zip(["TP", "FP", "FN", "ACC", "SUC"],[tp.shape[0], fp.shape[0], fn.shape[0], acc, suc]):
-                        self._met[e][layer][idt_name].add(idt)
-        self.init()
-        return self._met
-        
-    @staticmethod
-    def organize(x, ind = ... , scale: torch.Tensor = torch.tensor([1.0, 1.0, 1.0, 1.0])):
-        """ the input should be 'B C Z X Y' and output is 'B (Z X Y) C'"""
-        out = rearrange(x, "B (E C) Z X Y -> B E C (Z X Y)", C = 4) + ind
-        out = torch.einsum("B E C R, C -> B E R C" , out, scale)
-        return out
-    
-    @staticmethod
-    def select(x, threshold = 0.7, sort = True):
-        mask = (x[..., 0] > threshold)
-        out = x[mask]
-        if sort:
-            out = out[out[..., 0].argsort(descending=True)]
-        return out
-    
-    @staticmethod
-    def nms(points, distance):
-        """do the nms for a table of points, and e means the elem type
-
-        Args:
-            points (tensor): the shape is like N * 3
-            r (float): a float
-            
-            This algorithm is based on tensor operation
-            1. create a distance matrix
-            2. check if distance < threshold
-            3. get the upper triangle of the matrix (remove the diagonal because it is always 0)
-            4. sum for dimension 0 (sum for each column) means whether the points need to be restrained
-            5. the second step is to cancel restraint points that contribute to the restraint of other points
-            6. End 
-            Example:
-            >>>        0 1 1
-            >>> DIS =  0 0 1
-            >>>        0 0 0
-            than
-            >>> restrain_tensor = [0, 1, 2]
-            but the point 1 is restrained by point 0, so we need to cancel the restraint of point 1, thus
-            >>> restrain_one = [0, 1, 1]
-            >>> restrain_one @ DIS_MAT = [0, 0, 1]
-            >>> final = [0, 1, 1]
-
-        Returns:
-            tuple: Selected, Not selected
-        """
-        if points.nelement() == 0:
-            return points, points
-        
-        DIS_MAT = torch.cdist(points, points) < distance
-        DIS_MAT = (torch.triu(DIS_MAT, diagonal= 1)).float()
-        restrain_tensor = DIS_MAT.sum(0)
-        restrain_tensor -= ((restrain_tensor != 0).float() @ DIS_MAT)
-        SELECT = restrain_tensor == 0
-        
-        return points[SELECT], points[SELECT.logical_not()]
-    
-    @staticmethod
-    def match(pred, targ, distance):
-        """match two group of points if there distance are lower that a given threshold
-
-        Args:
-            pred (tensor): N * 3
-            targ (tensor): M * 3
-            distance (_type_): float
-
-        Returns:
-            (matched from pred, non-matched from pred, non-matched from targ) : R * 3, (N - R) * 3, (M - R) * 3
-        """
-        if pred.nelement() == 0:
-            return pred, pred, targ
-        DIS_MAT = torch.cdist(pred, targ)
-        SELECT_P = (DIS_MAT  < distance).sum(1) != 0
-        SELECT_T = torch.full((targ.shape[0], ), False)
-        mask = DIS_MAT[SELECT_P]
-        if mask.nelement() != 0:
-            mask = mask.argmin(1)
-            SELECT_T[mask] = True
-        return pred[SELECT_P], pred[SELECT_P.logical_not()], targ[SELECT_T.logical_not()]
-        
-    @classmethod
-    def split(self, points, split):
-        """_summary_
-
-        Args:
-            points (tensor): Z, X, Y
-            split (None | tuple, optional): _description_. Defaults to None.
-        """
-        if points.nelement() == 0:
-            return tuple(points for _ in range(len(split) - 1))
-        
-        SELECT = torch.logical_and(points[...,0] > split[0], points[...,0] < split[1])
-        
-        if len(split) > 2:
-            return points[SELECT], *self.split(points[SELECT.logical_not()], split = split[1:])
-        
-        else:
-            return (points[SELECT],)
