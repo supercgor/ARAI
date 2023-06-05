@@ -3,6 +3,7 @@ import torch.nn as nn
 from einops import repeat, rearrange
 from torch.autograd import grad
 from torch.nn import functional as F
+from typing import Tuple
 
 class BinaryFocalLoss(nn.Module):
     r"""Focal loss for binary-classification
@@ -160,3 +161,27 @@ class modelLoss(nn.Module):
             LOSS = LOSS + self.w_local * self.Llocal(predictions, targets)
             
         return LOSS
+    
+class modelLoss_bnc(nn.Module):
+    def __init__(self, w_xy = 0.5, w_z = 0.5, w_c = 1.0, w_cls = (7.0, 5.0, 1.0), order = ("O", "H")):
+        super(modelLoss_bnc, self).__init__()
+        self.w_xy = w_xy
+        self.w_z = w_z
+        self.w_c = w_c
+        self.order = order
+        
+        self.Lc = nn.CrossEntropyLoss(weight=torch.tensor(w_cls))
+        self.Lxy = nn.MSELoss()
+        self.Lz = nn.MSELoss()
+    
+    def forward(self, pd: Tuple[torch.Tensor], tg: Tuple[torch.Tensor]):
+        pd_pos, pd_cls = pd 
+        tg_pos, tg_cls = tg
+        lw = self.w_c * self.Lc(pd_cls, tg_cls)
+        # B Z X Y
+        mask = tg_cls != len(self.order)
+        pd_pos, tg_pos = pd_pos.permute(0, 2, 3, 4, 1), tg_pos.permute(0, 2, 3, 4, 1)
+        lz= self.w_z * self.Lz(pd_pos[...,0][mask], tg_pos[...,0][mask])
+        lxy = self.w_xy * self.Lxy(pd_pos[...,1:][mask], tg_pos[...,1:][mask])
+        print(lz, lxy, lw)
+        return lw + lxy + lz

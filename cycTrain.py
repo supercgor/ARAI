@@ -38,7 +38,7 @@ class Trainer():
         self.work_dir = f"{cfg.path.check_root}/CycleTrain_{time.strftime('%Y%m%d-%H%M%S', time.localtime())}"
         os.makedirs(self.work_dir, exist_ok=True)
 
-        self.tb_writer = SummaryWriter(
+        self.tb_logger = SummaryWriter(
             log_dir=f"{self.work_dir}/runs/cyctrain")
 
         self.logger = Logger(path=f"{self.work_dir}",
@@ -101,15 +101,15 @@ class Trainer():
                 log.append(f"Model {key} loading warning, {name}")
 
         self.OPTG = torch.optim.Adam(chain(self.A2B.parameters(
-        ), self.B2A.parameters()), lr=2e-4, betas=(0.5, 0.999))
+        ), self.B2A.parameters()), lr=1e-4, betas=(0.5, 0.999))
 
         self.OPTD = torch.optim.Adam(
-            chain(self.A.parameters(), self.B.parameters()), lr=2e-4, betas=(0.5, 0.999))
+            chain(self.A.parameters(), self.B.parameters()), lr=1e-4, betas=(0.5, 0.999))
 
         self.SCHE_G = Scheduler(
-            self.OPTG, warmup_steps=1000, decay_factor=50000)
+            self.OPTG, warmup_steps=5, decay_factor=1500)
         self.SCHE_D = Scheduler(
-            self.OPTD, warmup_steps=1000, decay_factor=50000)
+            self.OPTD, warmup_steps=5, decay_factor=1500)
 
         A_trans = torchvision.transforms.Compose([
             torchvision.transforms.RandomApply([PixelShift(fill=None)], p=0.5),
@@ -118,7 +118,7 @@ class Trainer():
             torchvision.transforms.RandomApply([ColorJitter()], p=0.3),
         ])
 
-        A_data = AFMDataset(f"../data/bulkice",
+        A_data = AFMDataset(f"{self.cfg.path.data_root}/bulkiceHup",
                             self.cfg.data.elem_name,
                             file_list="train.filelist",
                             transform=A_trans,
@@ -128,8 +128,8 @@ class Trainer():
                             label = False)
 
         self.A_loader = DataLoader(A_data,
-                                   batch_size=self.cfg.setting.batch_size,
-                                   num_workers=self.cfg.setting.num_workers,
+                                   batch_size = 4,
+                                   num_workers = 6,
                                    pin_memory=self.cfg.setting.pin_memory,
                                    shuffle=True,
                                    drop_last=True)
@@ -139,9 +139,9 @@ class Trainer():
             torchvision.transforms.RandomApply([Blur()], p=0.3),
             ColorJitter()])
 
-        B_data = AFMDataset(f"../data/bulkexpR",
+        B_data = AFMDataset(f"{self.cfg.path.data_root}/bulkexpR",
                             self.cfg.data.elem_name,
-                            file_list="train.filelist",
+                            file_list="trainbetter.filelist",
                             transform=B_trans,
                             img_use=self.cfg.data.img_use,
                             model_inp=self.cfg.model.inp_size,
@@ -149,8 +149,8 @@ class Trainer():
                             label = False)
 
         self.B_loader = DataLoader(B_data,
-                                   batch_size=self.cfg.setting.batch_size,
-                                   num_workers=self.cfg.setting.num_workers,
+                                   batch_size = 4,
+                                   num_workers = 6,
                                    pin_memory=self.cfg.setting.pin_memory,
                                    drop_last=True)
 
@@ -180,8 +180,8 @@ class Trainer():
     def train(self, epoch):
         A_iter = iter(self.A_loader)
         B_iter = iter(self.B_loader)
-        max_iter = min(len(A_iter), len(B_iter))
-
+        gan_opa = 3
+        max_iter = min(len(A_iter), len(B_iter)) // (1 + gan_opa)
         Loss = {
             "A2B": metStat(),
             "B2A": metStat(),
@@ -224,45 +224,48 @@ class Trainer():
             Grad["D"].add(GD)
             Loss["A"].add(L_A)
             Loss["B"].add(L_B)
+            
+            for t in range(gan_opa):
+                self.OPTG.zero_grad()
+                self.A.requires_grad_(False)
+                self.B.requires_grad_(False)
+                self.A2B.requires_grad_(True)
+                self.B2A.requires_grad_(True)
 
-            self.OPTG.zero_grad()
-            self.A.requires_grad_(False)
-            self.B.requires_grad_(False)
-            self.A2B.requires_grad_(True)
-            self.B2A.requires_grad_(True)
-
-            real_A, _ = next(A_iter)
-            real_B, _ = next(B_iter)
-            real_A, real_B = real_A.cuda(), real_B.cuda()
-            fake_B, fake_A = self.A2B(
-                real_A).sigmoid(), self.B2A(real_B).sigmoid()
-            with torch.no_grad():
+                real_A, _ = next(A_iter)
+                real_B, _ = next(B_iter)
+                real_A, real_B = real_A.cuda(), real_B.cuda()
+                fake_B, fake_A = self.A2B(
+                    real_A).sigmoid(), self.B2A(real_B).sigmoid()
+                
                 P_A, R_A = self.A(fake_A).sigmoid(), self.A(real_A).sigmoid()
                 P_B, R_B = self.B(fake_B).sigmoid(), self.B(real_B).sigmoid()
 
-            L_B2A = (F.mse_loss(P_A, torch.ones_like(P_A)) +
-                     F.mse_loss(R_A, torch.zeros_like(R_A))) * 2 + \
-                10 * F.l1_loss(self.B2A(fake_B).sigmoid(), real_A) + \
-                0.5 * F.l1_loss(self.B2A(real_A).sigmoid(), real_A)
+                L_B2A = (F.mse_loss(P_A, torch.ones_like(P_A)) +
+                        F.mse_loss(R_A, torch.zeros_like(R_A))) * 2 + \
+                    10 * F.l1_loss(self.B2A(fake_B).sigmoid(), real_A) + \
+                    0.5 * F.l1_loss(self.B2A(real_A).sigmoid(), real_A)
 
-            L_B2A.backward(retain_graph=True)
-            L_A2B = (F.mse_loss(P_B, torch.ones_like(P_B)) +
-                     F.mse_loss(R_B, torch.zeros_like(R_B))) * 2 + \
-                10 * F.l1_loss(self.A2B(fake_A).sigmoid(), real_B) + \
-                0.5 * F.l1_loss(self.A2B(real_B).sigmoid(), real_B)
-            L_A2B.backward()
-            GG = nn.utils.clip_grad_norm_(
-                chain(self.A2B.parameters(), self.B2A.parameters()), 100, error_if_nonfinite=True)
-            self.OPTG.step()
-            Loss["A2B"].add(L_A2B)
-            Loss["B2A"].add(L_B2A)
-            Grad["G"].add(GG)
+                L_B2A.backward(retain_graph=True)
+                L_A2B = (F.mse_loss(P_B, torch.ones_like(P_B)) +
+                        F.mse_loss(R_B, torch.zeros_like(R_B))) * 2 + \
+                    10 * F.l1_loss(self.A2B(fake_A).sigmoid(), real_B) + \
+                    0.5 * F.l1_loss(self.A2B(real_B).sigmoid(), real_B)
+                    
+                L_A2B.backward()
+                GG = nn.utils.clip_grad_norm_(
+                    chain(self.A2B.parameters(), self.B2A.parameters()), 100, error_if_nonfinite=True)
+                self.OPTG.step()
+                Loss["A2B"].add(L_A2B)
+                Loss["B2A"].add(L_B2A)
+                Grad["G"].add(GG)
 
             self.SCHE_D.step()
             self.SCHE_G.step()
 
             pbar.set_postfix(**{key: value.last for key, value in Loss.items()},
                              **{key: value.last for key, value in Grad.items()})
+            pbar.update(1)
 
             self.tb_logger.add_scalars(
                 "Loss", {key: value.last for key, value in Loss.items()}, step)
@@ -273,14 +276,17 @@ class Trainer():
                     torch.cat([real_A[0], fake_B[0]], dim=1).permute(1, 0, 2, 3).cpu(), nrow=16), step)
                 self.tb_logger.add_image("GAN Image B (RealB & Fake)", torchvision.utils.make_grid(
                     torch.cat([real_B[0], fake_A[0]], dim=1).permute(1, 0, 2, 3).cpu(), nrow=16), step)
-                
+            
+            i += 1
+        
+        pbar.update()
+        pbar.close()
         return {key: value() for key, value in chain(Loss.items(), Grad.items())}
 
     def save(self, epoch, log_dic):
         met = 0
-        if log_dic["A2B"].n > 0:
-            met += log_dic["A2B"]
-            met += log_dic["B2A"]
+        met += log_dic["A2B"]
+        met += log_dic["B2A"]
 
         logger = self.logger
 
@@ -288,7 +294,7 @@ class Trainer():
             self.best_met = met
 
             log = []
-            name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
+            name = f"CP{epoch:02d}_LOSS{met:.4f}.pkl"
             self.A2B.save(path=f"{self.work_dir}/A2B_{name}")
             self.B2A.save(path=f"{self.work_dir}/B2A_{name}")
             self.A.save(path=f"{self.work_dir}/A_{name}")

@@ -21,23 +21,40 @@ if os.environ.get("USER") == "supercgor":
     from config.config import get_config
 else:
     from config.wm import get_config
+    
+import argparse
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+
+parser = argparse.ArgumentParser(description='Testing the model')
+parser.add_argument("-d", "--dataset", help="Specify the dataset to use", default="../data/bulkice")
+parser.add_argument("-f", "--filelist", help="Specify the filelist to use", default="test.filelist")
+parser.add_argument("-l", "--label", help="Specify whether to use label", default=False)
+parser.add_argument("-n", "--npy", help="Specify whether to save npy", default=True)
+
+args = parser.parse_args()
 
 class Trainer():
-    def __init__(self, label=False, npy=True):
+    def __init__(self):
         cfg = get_config()
         self.cfg = cfg
-        self.label = label
-        self.npy = npy
-
+        self.label = str2bool(args.label)
+        self.npy = str2bool(args.npy)
         assert cfg.setting.device != [], "No device is specified!"
 
-        self.data_path = f"../data/bulkice"
+        self.data_path = args.dataset
         os.makedirs(f"{self.data_path}/result", exist_ok=True)
         os.makedirs(f"{self.data_path}/npy", exist_ok=True)
+        os.makedirs(f"{self.data_path}/result/{cfg.model.checkpoint}", exist_ok=True)
+        os.makedirs(f"{self.data_path}/npy/{cfg.model.checkpoint}", exist_ok=True)
 
         self.work_dir = f"{cfg.path.check_root}/{cfg.model.checkpoint}"
-
         self.logger = Logger(path=f"{self.data_path}/result/{cfg.model.checkpoint}",elem=cfg.data.elem_name,split=cfg.setting.split)
 
         self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/test")
@@ -69,12 +86,12 @@ class Trainer():
             if name == "":
                 continue
             try:
-                getattr(self, key).load(name, pretrained=True)
+                getattr(self, key).load(name, pretrained=False)
                 log.append(f"Loade model {key} from {name}")
             except (FileNotFoundError, IsADirectoryError):
                 log.append(f"Model {key} loading warning, {name}")
-
-        self.logger.info(log)
+        for l in log:
+            self.logger.info(l)
 
         self.model = nn.Sequential(self.net, self.reg)
         self.model = self.model.eval()
@@ -84,7 +101,7 @@ class Trainer():
 
         pred_data = AFMDataset(self.data_path,
                                self.cfg.data.elem_name,
-                               file_list="pred.filelist",
+                               file_list=args.filelist,
                                img_use=self.cfg.data.img_use,
                                model_inp=self.cfg.model.inp_size,
                                model_out=self.cfg.model.out_size,
@@ -125,13 +142,10 @@ class Trainer():
                 match = self.analyse(pd_box, gt_box)
 
             for filename, x in zip(filenames, pd_box):
-                os.makedirs(
-                    f"{self.data_path}/result/{self.cfg.model.checkpoint}", exist_ok=True)
-                poscar.box2pos(x,
+                points_dict = poscar.box2pos(x,
                                real_size=self.cfg.data.real_size,
                                threshold=self.cfg.model.threshold)
-                poscar.pos2poscar(
-                    f"{self.data_path}/result/{self.cfg.model.checkpoint}/{filename}.poscar")
+                poscar.pos2poscar(f"{self.data_path}/result/{self.cfg.model.checkpoint}/{filename}.poscar", points_dict)
                 if self.npy:
                     os.makedirs(
                         f"{self.data_path}/npy/{self.cfg.model.checkpoint}", exist_ok=True)
@@ -140,6 +154,7 @@ class Trainer():
 
             pbar.set_postfix(file=filenames[0])
             pbar.update(1)
+            i += 1
 
         pbar.update(1)
         pbar.close()
@@ -150,3 +165,6 @@ class Trainer():
 
         self.logger.info(f"Spend time: {time.time() - start_time:.2f}s")
         self.logger.info(f'End prediction')
+        
+if __name__ == "__main__":
+    Trainer().fit()

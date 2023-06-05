@@ -6,7 +6,7 @@ _C = CN()
 # -----------------------------------------------------------------------------
 _C.path = CN()
 # datasets path
-_C.path.data_root = '../data'
+_C.path.data_root = '/gpfs/share/home/2000012508/ML2023/data'
 # checkpoints path
 _C.path.check_root = './model/pretrain'
 
@@ -15,10 +15,7 @@ _C.path.check_root = './model/pretrain'
 # -----------------------------------------------------------------------------
 _C.setting = CN()
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.setting.batch_accumulation = 1
-_C.setting.disc_accumulation = 3
-_C.setting.denoise_accumulation = 1
-_C.setting.batch_size = 6
+_C.setting.batch_size = 4
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.setting.pin_memory = True
 # Number of data loading threads
@@ -26,7 +23,7 @@ _C.setting.num_workers = 12
 # 0 for using one GPU or list for Parallel device idx, no cpu: []
 _C.setting.device = (0, 1)
 # Training epochs
-_C.setting.epochs = 100
+_C.setting.epochs = 50
 # Enable local loss after epoch
 _C.setting.local_epoch = 999
 # learning rate
@@ -47,10 +44,9 @@ _C.model = CN()
 # checkpoint name
 _C.model.checkpoint = "UNet_strong_baseline"
 # use net
-_C.model.fea = "unet_CP22_LOSS0.0352.pkl"
-_C.model.reg = "reg_CP22_LOSS0.0352.pkl"
-_C.model.cyc = "3_A2B_2.3255260413742067.pkl"
-_C.model.denoise = ""
+_C.model.fea = ""
+_C.model.reg = ""
+_C.model.cyc = "A2B_CP11_LOSS2.6035.pkl"
 # the init channels number
 _C.model.channels = 32
 # the size of input and output. (Z, X, Y)
@@ -66,18 +62,13 @@ _C.model.nms = True
 # -----------------------------------------------------------------------------
 _C.data = CN()
 # use dataset smallice or bulkice
-_C.data.dataset = 'bulkice'
+_C.data.dataset = 'bulkiceHup'
 # How many images will be used
 _C.data.img_use = 10
 # Element names
 _C.data.elem_name = ('O', 'H')
 # Real box size (Z, X, Y)
 _C.data.real_size = (3, 25, 25)
-# file list
-_C.data.train_filelist = 'train.filelist'
-_C.data.valid_filelist = 'valid.filelist'
-_C.data.test_filelist = 'test.filelist'
-_C.data.pred_filelist = 'pred.filelist'
 
 # -----------------------------------------------------------------------------
 # Criterion settings

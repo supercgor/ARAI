@@ -55,14 +55,22 @@ class analyse_cls(nn.Module):
         return count
     
     @torch.no_grad()
-    def forward(self, batch_pd, batch_gt):
+    def forward(self, batch_pd, batch_gt, mode = "box"):
         # batch_gt_ind: List[Dict[str, torch.Tensor]]
+        if isinstance(batch_pd, tuple) or isinstance(batch_pd, list):
+            batch_pd, batch_pdcls = batch_pd
+            batch_gt, batch_gtcls = batch_gt
+            batch_gt.to(batch_pd.device)
+            batch_gtcls.to(batch_pd.device)
         for b, (pd, gt) in enumerate(zip(batch_pd, batch_gt)):
-            pd = poscar.box2pos(pd, real_size = self.real_size, order = [e for e in self.elements if e is not None], threshold=self.THRES, sort=self.SORT)
-            gt = poscar.box2pos(gt, real_size = self.real_size, order = [e for e in self.elements if e is not None], threshold= 0.5, sort = False)
+            if mode.startswith("box"):
+                pd = poscar.box2pos(pd, real_size = self.real_size, order = [e for e in self.elements if e is not None], threshold=self.THRES, sort=self.SORT)
+                gt = poscar.box2pos(gt, real_size = self.real_size, order = [e for e in self.elements if e is not None], threshold= 0.5, sort = False)
+            else:
+                pd = poscar.boxncls2pos(pd, batch_pdcls[b], real_size = self.real_size, order = [e for e in self.elements if e is not None], sort=self.SORT)
+                gt = poscar.boxncls2pos(gt, batch_gtcls[b], real_size = self.real_size, order = [e for e in self.elements if e is not None], nms = False,sort = False)
 
             if self.NMS:
-                pd = self.nms(pd)
                 pd = self.nms(pd)
             
             match = self.match(pd, gt) # Dict[str, tuple]: (T, P, TP, FP, FN, AP, AR, SUC)

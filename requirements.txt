@@ -5,8 +5,7 @@ pandas
 yacs
 opencv-python
 torch
+einops
 trochvision
 torchaudio
 tensorboard
-torchmetrics
-torchmetrics[image]

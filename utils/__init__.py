@@ -120,6 +120,33 @@ def label2img(x: torch.Tensor,
     x = x[(0,), ...]
     return x
 
+def bnc2img(x: torch.Tensor, out_size: Tuple[int] = (4, 32, 32), format = "BCZXY", order = ("O", "H")):
+    """convert output class to image
+
+    Args:
+        x (torch.Tensor): shape: (B, C, Z, X, Y)
+        out_size (Tuple[int], optional): _description_. Defaults to (4, 32, 32).
+    """
+    if "B" in format:
+        x = x.select(dim = format.index("B"), index = 0)
+        format = format.replace("B", "")
+    if "C" in format:
+        y = torch.stack([x.select(dim = format.index("C"), index = i) for i in range(len(order))])
+        format = format.replace("C", "")
+    else:
+        y = torch.zeros_like(x, dtype = torch.float).unsqueeze(0).repeat(len(order), 1, 1, 1)
+        for i, o in enumerate(order):
+            y[i][x == i] = 1
+            
+    # y shape (len(order), Z, X, Y)
+    y = F.interpolate(y.unsqueeze(0), size = out_size, mode = "trilinear")
+    # combine first and second dims -> (1 x (E x Z) x X x Y)
+    y = y.flatten(1,2)
+    y = y.permute(1,0,2,3)
+    y = make_grid(y, nrow = out_size[0])
+    y = y[(0,), ...]
+    return y
+    
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)

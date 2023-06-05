@@ -4,6 +4,7 @@ import os
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import functional as F
 from torchvision import transforms
 
 import cv2
@@ -161,6 +162,47 @@ class poscar():
             offset = torch.cat((ONE, offset), dim = 1)
             OUT[IND[...,0],IND[...,1],IND[...,2], i] = offset
         return OUT
+    
+    @classmethod
+    def pos2boxncls(cls, points_dict, real_size = (3, 25, 25), out_size = (8, 32, 32), order = ("O", "H")):
+        scale = torch.tensor([i/j for i,j in zip(out_size, real_size)])
+        OFFSET = torch.FloatTensor(*out_size, 3).zero_()
+        CLS = torch.LongTensor(*out_size).fill_(len(order))
+        for i, e in enumerate(order):
+            POS = points_dict[e] * scale
+            IND = POS.floor().int()
+            OFFSET[IND[...,0],IND[...,1],IND[...,2]] = (POS- IND)
+            CLS[IND[...,0],IND[...,1],IND[...,2]] = i
+        return OFFSET.permute(3, 0, 1, 2), CLS
+    
+    @classmethod
+    def boxncls2pos(cls, OFFSET: torch.Tensor, CLS: torch.Tensor, real_size = (3, 25, 25), order = ("O", "H"), nms = True, sort = True) -> Dict[str, torch.Tensor]:
+        """
+        OFFSET: (3, Z, X, Y)
+        CLS: (Z, X, Y) or (n, Z, X, Y)
+        """
+        if CLS.dim() == 3: # n
+            conf, CLS =  torch.ones_like(CLS), CLS# (Z, X, Y)
+            sort = False
+        else:
+            conf, CLS = CLS.max(dim = 0).values, CLS.argmax(dim = 0) # (Z, X, Y)
+        Z, X, Y = CLS.shape
+
+        scale = torch.tensor([i/j for i,j in zip(real_size, (Z, X, Y))], device = CLS.device)
+        pos = OrderedDict()
+        for i, e in enumerate(order):
+            IND = CLS == i
+            POS = (OFFSET.permute(1,2,3,0)[IND] + IND.nonzero()) * scale
+            CONF = conf[IND]
+            
+            if sort:
+                sort_ind = torch.argsort(CONF, descending=True)
+                POS = POS[sort_ind]
+            
+            pos[e] = POS
+        if nms:
+            pos = cls.nms(pos)
+        return pos
     
     @classmethod
     def box2pos(cls, 

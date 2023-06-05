@@ -28,10 +28,10 @@ _C.setting.split = (0.0, 3.0) # Split space
 # Model settings
 # -----------------------------------------------------------------------------
 _C.model = CN()
-_C.model.checkpoint = "" # checkpoint name
+_C.model.checkpoint = "tune_UNet_strong_baseline" # checkpoint name
 # use net
-_C.model.fea = ""
-_C.model.reg = ""
+_C.model.fea = "tune_unet_CP07_LOSS0.0549.pkl"
+_C.model.reg = "tune_reg_CP07_LOSS0.0549.pkl"
 _C.model.cyc = ""
 _C.model.channels = 32 # the init channels number
 _C.model.inp_size = (16, 128, 128) # the size of input. (Z, X, Y)

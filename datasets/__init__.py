@@ -37,6 +37,7 @@ class AFMDataset(Dataset):
                  preload: bool = False,
                  fill_none: None | int = None,
                  label: bool = True,
+                 label_format: str = "box",
                  random_layer=True,
                  ):
         self.root = root_path
@@ -49,6 +50,7 @@ class AFMDataset(Dataset):
         self.out_size = model_out
         self.random_layer = random_layer
         self.fill_none = fill_none
+        self.label_format = label_format
         self.label = label
 
     def __getitem__(self, index):
@@ -99,9 +101,12 @@ class AFMDataset(Dataset):
 
         if self.label:
             # transform the pos to bbox
-            pos = poscar.pos2box(
-                bbox, real_size=data_package['real_size'], out_size=self.out_size, order=self.elements)
-            return data, pos, filename
+            if self.label_format == "box":
+                pos = poscar.pos2box(bbox, real_size=data_package['real_size'], out_size=self.out_size, order=self.elements)
+                return data, pos, filename
+            elif self.label_format == "boxncls":
+                OFFSET, CLS = poscar.pos2boxncls(bbox, real_size=data_package['real_size'], out_size=self.out_size, order=self.elements)
+                return data, (OFFSET, CLS), filename
         else:
             # build the AFM dataset class without label for prediction only
             return data, filename

@@ -60,18 +60,18 @@ class basicParts():
             elif len(self.save_model) >= self.save_num:
                 os.remove(self.save_model.pop(0))
             self.save_model.append(path)
-    
+     
     def structure(self):
         structure(self)
         
 class basicModel(basicParts, nn.Module):
-    def __init__(self, save_num: int = -1):
+    def __init__(self, save_num: int = 3):
         nn.Module.__init__(self)
         self._name = self._get_name()
         basicParts.__init__(self, save_num)
     
 class basicParallel(basicParts, nn.DataParallel):
-    def __init__(self, module, device_ids=None, output_device=None, dim=0, save_num: int = -1):
+    def __init__(self, module, device_ids=None, output_device=None, dim=0, save_num: int = 3):
         nn.DataParallel.__init__(self, module, device_ids, output_device, dim)
         self._name = module.name
         basicParts.__init__(self, save_num)
