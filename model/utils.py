@@ -113,3 +113,33 @@ def structure(model):
         model._get_name(), num_para * type_size / 1000 / 1000))
     print(f'The memory used now: {torch.cuda.memory_allocated() / 1024 / 1024:.2f}MB')
     print('-' * 100)
+    
+def save_model(module, path: str):
+        try:
+            state_dict = module.module.state_dict()
+        except AttributeError:
+            state_dict = module.state_dict()
+        torch.save(state_dict, path)
+
+def load_model(module, path: str, strict = False):
+    state_dict = module.state_dict()
+    param_names = list(state_dict.keys())
+    pretrained_state_dict = torch.load(path)
+    pretrained_param_names = list(pretrained_state_dict.keys())
+    match_list = []
+    for i, param in enumerate(pretrained_param_names):
+        if i == len(param_names):
+            break
+        if param == param_names[i]:
+            match_list.append(param)
+            state_dict[param] = pretrained_state_dict[param]
+        else:
+            break
+    if strict:
+        module.load_state_dict(state_dict)
+    else:
+        try:
+            module.load_state_dict(state_dict)
+        except RuntimeError:
+            pass
+    return match_list

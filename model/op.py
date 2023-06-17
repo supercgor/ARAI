@@ -52,6 +52,18 @@ def avg_pool_nd(dims, *args, **kwargs):
         return nn.AvgPool3d(*args, **kwargs)
     raise ValueError(f"unsupported dimensions: {dims}")
 
+def max_adt_pool_nd(dims, *args, **kwargs):
+    """
+    Create a 1D, 2D, or 3D adaptive max pooling module.
+    """
+    if dims == 1:
+        return nn.AdaptiveMaxPool1d(*args, **kwargs)
+    elif dims == 2:
+        return nn.AdaptiveMaxPool2d(*args, **kwargs)
+    elif dims == 3:
+        return nn.AdaptiveMaxPool3d(*args, **kwargs)
+    raise ValueError(f"unsupported dimensions: {dims}")
+
 def avg_adt_pool_nd(dims, *args, **kwargs):
     """
     Create a 1D, 2D, or 3D adaptive average pooling module.
@@ -109,7 +121,7 @@ def normalization(channels):
     :param channels: number of input channels.
     :return: an nn.Module for normalization.
     """
-    return GroupNorm32(32, channels)
+    return GroupNorm32(min(32, channels), channels)
 
 
 def timestep_embedding(timesteps, dim, max_period=10000):
@@ -214,23 +226,27 @@ class Upsample(nn.Module):
                  upsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, dims=2, out_channels=None):
+    def __init__(self, channels, use_conv, dims=2, out_channels=None, z_down = False):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
         self.dims = dims
+        self.z_down = z_down
+        
         if use_conv:
             self.conv = conv_nd(dims, self.channels, self.out_channels, 3, padding=1)
 
     def forward(self, x):
         assert x.shape[1] == self.channels
         if self.dims == 3:
-            x = F.interpolate(
-                x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest"
-            )
+            if self.z_down:
+                x = F.interpolate(x, scale_factor= 2, mode="nearest")
+            else: 
+                x = F.interpolate(x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest")
         else:
             x = F.interpolate(x, scale_factor=2, mode="nearest")
+            
         if self.use_conv:
             x = self.conv(x)
         return x
@@ -246,16 +262,19 @@ class Downsample(nn.Module):
                  downsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, dims=2, out_channels=None):
+    def __init__(self, channels, use_conv, dims=2, out_channels=None, z_down = False):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
         self.dims = dims
-        stride = 2 if dims != 3 else (1, 2, 2)
+        self.z_down = z_down
+        if dims == 3 and not z_down:
+            stride = (1, 2, 2)
+        else:
+            stride = 2
         if use_conv:
-            self.op = conv_nd(
-                dims, self.channels, self.out_channels, 3, stride=stride, padding=1
+            self.op = conv_nd(dims, self.channels, self.out_channels, 3, stride=stride, padding=1
             )
         else:
             assert self.channels == self.out_channels
@@ -306,19 +325,7 @@ class ResBlock(TimestepBlock):
     :param down: if True, use this block for downsampling.
     """
 
-    def __init__(
-        self,
-        channels,
-        emb_channels,
-        dropout,
-        out_channels=None,
-        use_conv=False,
-        use_scale_shift_norm=False,
-        dims=2,
-        use_checkpoint=False,
-        up=False,
-        down=False,
-    ):
+    def __init__(self, channels, emb_channels, dropout, out_channels=None, use_conv=False, use_scale_shift_norm=False, dims=2, use_checkpoint=False, up=False, down=False, z_down = False, padding_mode="reflect"):
         super().__init__()
         self.channels = channels
         self.emb_channels = emb_channels
@@ -327,20 +334,21 @@ class ResBlock(TimestepBlock):
         self.use_conv = use_conv
         self.use_checkpoint = use_checkpoint
         self.use_scale_shift_norm = use_scale_shift_norm
+        self.z_down = z_down
 
         self.in_layers = nn.Sequential()
         self.in_layers.add_module("norm", normalization(channels))
         self.in_layers.add_module("act", nn.SiLU())
-        self.in_layers.add_module("conv", conv_nd(dims, channels, self.out_channels, 3, padding=1))
+        self.in_layers.add_module("conv", conv_nd(dims, channels, self.out_channels, 3, padding=1, padding_mode=padding_mode))
 
         self.updown = up or down
 
         if up:
-            self.h_upd = Upsample(channels, False, dims)
-            self.x_upd = Upsample(channels, False, dims)
+            self.h_upd = Upsample(channels, False, dims, z_down = z_down)
+            self.x_upd = Upsample(channels, False, dims, z_down = z_down)
         elif down:
-            self.h_upd = Downsample(channels, False, dims)
-            self.x_upd = Downsample(channels, False, dims)
+            self.h_upd = Downsample(channels, False, dims, z_down = z_down)
+            self.x_upd = Downsample(channels, False, dims, z_down = z_down)
         else:
             self.h_upd = self.x_upd = nn.Identity()
         

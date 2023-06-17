@@ -93,19 +93,9 @@ def read_pic(path: str,
     return IMG
 
 class poscar():
-    def __init__(self, 
-                 path, 
-                 lattice=(25, 25, 3), 
-                 out_size=(32, 32, 4), 
-                 elem=("O", "H"), 
-                 cutoff=OrderedDict(O=2.2, H=0.8)
-                 ):
-        self._lattice = np.asarray(lattice)
-        self._out_size = np.asarray(out_size)
-        self._elem = elem
-        self._cutoff = cutoff
-        self.zoom = [i/j for i, j in zip(lattice, out_size)]
-
+    """
+    poscar A collection of functions to deal with poscar files and data format.
+    """
     @classmethod
     def load(cls, 
              name,      # The name of the file, should end with .npy or .poscar
@@ -209,7 +199,7 @@ class poscar():
                 box, 
                 real_size = (3, 25, 25), 
                 order = ("O", "H"), 
-                threshold = 0.7, 
+                threshold = 0.5, 
                 nms = True,
                 sort = True,
                 format = "DHWEC") -> Dict[str, torch.Tensor]:
@@ -236,35 +226,11 @@ class poscar():
             pos = cls.nms(pos)
         return pos
     
-    def save(self, name, pos):
-        output = ""
-        output += f"{' '.join(self.elem)}\n"
-        output += f"{1:3.1f}" + "\n"
-        output += f"\t{self.lattice[0]:.8f} {0:.8f} {0:.8f}\n"
-        output += f"\t{0:.8f} {self.lattice[1]:.8f} {0:.8f}\n"
-        output += f"\t{0:.8f} {0:.8f} {self.lattice[2]:.8f}\n"
-        output += f"\t{' '.join([str(ele) for ele in pos])}\n"
-        output += f"\t{' '.join([str(pos[ele].shape[0]) for ele in pos])}\n"
-        output += f"Selective dynamics\n"
-        output += f"Direct\n"
-        for ele in pos:
-            p = pos[ele]
-            for a in p:
-                output += f" {a[0]/self.lattice[0]:.8f} {a[1]/self.lattice[1]:.8f} {a[2]/self.lattice[2]:.8f} T T T\n"
-
-        path = f"{self.path}/result/{self.model_name}"
-        if not os.path.exists(path):
-            os.mkdir(path)
-
-        with open(f"{path}/{name}", 'w') as f:
-            f.write(output)
-        return
-
-    def save4npy(self, name, pred, NMS=True, conf=0.7):
-        return self.save(name, self.npy2pos(pred, NMS=NMS, conf=conf))
-    
     @classmethod
-    def nms(cls, pd_pos: Dict[str, torch.Tensor], radius: Dict[str, float] = {"O":0.8, "H":0.6}):
+    def nms(cls, 
+            pd_pos: Dict[str, torch.Tensor], 
+            radius: Dict[str, float] = {"O":0.8, "H":0.6}, 
+            recusion = 1):
         for e in pd_pos.keys():
             pos = pd_pos[e]
             if pos.nelement() == 0:
@@ -281,7 +247,10 @@ class poscar():
             SELECT = restrain_tensor == 0
             pd_pos[e] = pos[SELECT]
             
-        return pd_pos
+        if recusion <= 1:
+            return pd_pos
+        else:
+            return cls.nms(pd_pos, radius, recusion - 1)
     
     @classmethod
     def pos2poscar(cls, 
