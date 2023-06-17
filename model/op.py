@@ -434,6 +434,7 @@ class AttentionBlock(nn.Module):
         num_head_channels=-1,
         use_checkpoint=False,
         use_new_attention_order=False,
+        position_encode = True,
     ):
         super().__init__()
         self.channels = channels
@@ -446,14 +447,18 @@ class AttentionBlock(nn.Module):
             self.num_heads = channels // num_head_channels
         self.use_checkpoint = use_checkpoint
         self.norm = normalization(channels)
-        self.qkv = conv_nd(1, channels, channels * 3, 1)
+        self.q = conv_nd(1, channels, channels, 1)
+        self.k = conv_nd(1, channels, channels, 1)
+        self.v = conv_nd(1, channels, channels, 1)
         if use_new_attention_order:
             # split qkv before split heads
             self.attention = QKVAttention(self.num_heads)
         else:
             # split heads before split qkv
             self.attention = QKVAttentionLegacy(self.num_heads)
-
+        
+        self.position_encode = PositionalEncoding(channels) if position_encode else None
+        
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
 
     def forward(self, x):
@@ -465,10 +470,26 @@ class AttentionBlock(nn.Module):
     def _forward(self, x):
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1)
-        qkv = self.qkv(self.norm(x))
+        h = self.norm(x)
+        q = k = self._pos_emb(h)
+        qkv = torch.cat([self.q(q), self.k(k), self.v(h)], dim=1)
         h = self.attention(qkv)
         h = self.proj_out(h)
         return (x + h).reshape(b, c, *spatial)
+    
+    def _pos_emb(self, x, channel_first = True):
+        if self.position_encode is None:
+            return x
+        else:
+            if channel_first:
+                b, c, *spatial = x.shape
+                shape = (b, *spatial, c)
+                pos = self.position_encode(shape, device = x.device)
+                pos.transpose_(1, 2)
+            else:
+                shape = x.shape
+                pos = self.position_encode(shape, device = x.device)
+            return x + pos
 
 
 def count_flops_attn(model, _x, y):
@@ -575,3 +596,58 @@ class GradReverse(torch.autograd.Function):
 def grad_reverse(x, alpha = 0.05):
     alpha = torch.tensor(alpha, device = x.device)
     return GradReverse.apply(x, alpha)
+
+# =====================================
+# copied and adapted from github: https://github.com/tatp22/multidim-positional-encoding/blob/master/positional_encodings/torch_encodings.py
+
+def positional_encoding(x: torch.Tensor | tuple, 
+                        channels: int | None = None, 
+                        temperture: int = 10000, 
+                        flatten: bool = True, 
+                        scale: float = 2* math.pi) -> torch.Tensor:
+    # x: (B, x, y, z, ch)
+    if isinstance(x, tuple):
+        b, *axis, c = x
+    else:
+        b, *axis, c = x.shape
+    channels = channels or c
+    axis_space = tuple([torch.linspace(0, 1, i) for i in axis])
+    axis_dim = (channels // len(axis_space)) + 1
+    
+    dim_t = torch.arange(axis_dim).float()
+    dim_t = temperture ** (dim_t / axis_dim) # (axis_dim)
+    
+    axis_embed = torch.stack(torch.meshgrid(*axis_space, indexing="ij"), dim=-1) * scale # (x, y, z, 3)
+    axis_embed = axis_embed.unsqueeze(-1) / dim_t # (x, y, z, 3, axis_dim)
+    axis_embed[..., 0::2].sin_()
+    axis_embed[..., 1::2].cos_()
+    axis_embed = axis_embed.transpose(-1, -2).flatten(-2)[..., :channels] # x, y, z, channels
+    if flatten:
+        axis_embed = axis_embed.flatten(0, -2) # (x * y * z, channels)
+    return axis_embed.unsqueeze(0) # (1, x * y * z, c or 1, x, y, z, c)
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, channels: int | None = None, 
+                 temperture: int = 10000, 
+                 flatten: bool = True, 
+                 scale: float = 2* math.pi):
+        super().__init__()
+        self.channels = channels
+        self.temperture = temperture
+        self.flatten = flatten
+        self.scale = scale
+        self._cache_shape = None
+        self._cache = None
+        
+    def forward(self, x: torch.Tensor | tuple, device = torch.device("cpu")) -> torch.Tensor:
+        if isinstance(x, tuple):
+            xshape = x
+        else:
+            xshape = x.shape[1:-1]
+        if xshape == self._cache_shape:
+            return self._cache
+        else:
+            self._cache = positional_encoding(x, self.channels, self.temperture, self.flatten, self.scale).to(device)
+            self._cache_shape = self._cache.shape[1:-1]
+            return self._cache
+    

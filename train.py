@@ -7,8 +7,8 @@ import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-from model import UNetModel, Regression
-from model.utils import basicParallel
+from model import build_basic_model
+from model.utils import save_model, load_model
 from itertools import chain
 
 from datasets import AFMDataset
@@ -39,53 +39,26 @@ class Trainer():
         self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/train")
 
         # load the feature extractor network
-        self.net = UNetModel(image_size=(16, 128, 128),
-                             in_channels=1,
-                             model_channels=32,
-                             out_channels=32,
-                             num_res_blocks=2,
-                             attention_resolutions=(8,),
-                             dropout=0.0,
-                             channel_mult=(1, 2, 4, 4),
-                             dims=3,
-                             num_heads = 4,
-                             time_embed=None,
-                             use_checkpoint=False).cuda()
+        self.net = build_basic_model().cuda()
         
-        self.logger.info(f"UNet parameters: {sum([p.numel() for p in self.net.parameters()])}")
-        
-        # load the regression network
-        self.reg = Regression(in_channels=32, out_channels=8).cuda()
-        self.logger.info(f"Reg parameters: {sum([p.numel() for p in self.reg.parameters()])}")
+        self.logger.info(f"Network parameters: {sum([p.numel() for p in self.net.parameters()])}")
 
         log = []
         
         try:
-            log.extend(self.net.load(f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}", pretrained=True))
+            log.extend(load_model(self.net, f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}"))
             log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.fea}")
         except (FileNotFoundError, IsADirectoryError):
-            log.append(
-                f"No network is loaded, start a new model: {self.net.name}")
+            log.append("No network is loaded, start a new model")
             
-        try:
-            log.extend(self.reg.load(f"{cfg.path.check_root}/{cfg.model.checkpoint}/{self.cfg.model.reg}", pretrained=True))
-            log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.reg}")
-        except (FileNotFoundError, IsADirectoryError):
-            log.append(
-                f"No regression network is loaded, start a new model: {self.reg.name}")
-
         if len(cfg.setting.device) >= 2:
-            self.net = basicParallel(self.net, device_ids = cfg.setting.device)
-            self.reg = basicParallel(self.reg, device_ids = cfg.setting.device)
+            self.net = nn.DataParallel(self.net, device_ids = cfg.setting.device)
 
         self.analyse = analyse_cls(threshold=cfg.model.threshold).cuda()
         
         self.LOSS = modelLoss(pos_w=cfg.criterion.pos_weight).cuda()
         
-        self.OPT = torch.optim.AdamW(
-            chain(self.net.parameters(), self.reg.parameters()), 
-            lr=self.cfg.setting.lr, 
-            weight_decay=5e-3)
+        self.OPT = torch.optim.AdamW(self.net.parameters(), lr=self.cfg.setting.lr, weight_decay=5e-3)
         
         self.SCHEDULER = Scheduler(self.OPT, warmup_steps=5, decay_factor=50000)
         
@@ -179,7 +152,6 @@ class Trainer():
         it_loader = iter(self.train_loader)
 
         self.net.train()
-        self.reg.train()
 
         # ----------------------------- --------------
 
@@ -193,12 +165,9 @@ class Trainer():
             for t in range(accu):
                 # imgs : (B, C, D, H, W), gt_box : (B, D, H, W, 2, 4), filenames : (B)
                 imgs, gt_box, filenames = next(it_loader)
-
                 imgs = imgs.cuda(non_blocking=True)
                 gt_box = gt_box.cuda(non_blocking=True)
-
-                pd_box = self.reg(self.net(imgs))
-                
+                pd_box = self.net(imgs)
                 loss = self.LOSS(pd_box, gt_box)
                 loss.backward()
 
@@ -208,8 +177,7 @@ class Trainer():
                 i += 1
                 pbar.update(1)
 
-            grad = nn.utils.clip_grad_norm_(
-                chain(self.net.parameters(),self.reg.parameters()), self.cfg.setting.clip_grad, error_if_nonfinite=True)
+            grad = nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.setting.clip_grad, error_if_nonfinite=True)
 
             T_dict['Grad'].add(grad)
 
@@ -222,19 +190,20 @@ class Trainer():
 
             # log Train dict
             if step % 100 == 0:
-                self.tb_writer.add_images(
-                    "Train/In IMG", imgs[0].permute(1, 0, 2, 3), step)
-                # print(pd_box.shape)
-                pd_img = label2img(pd_box, format = "BZXYEC", use_sigmoid= False)
-                # print(pd_img.shape)
-                self.tb_writer.add_images(
-                    "Train/OUT BOX (Blue: ground truth, Yellow: prediction)", torch.stack([label2img(pd_box, format = "BZXYEC", use_sigmoid= False)] * 2 + [label2img(gt_box, format = "BZXYEC", use_sigmoid= False)], dim = 1), step)
+                self.tb_writer.add_images("Train/In IMG", imgs[0].permute(1, 0, 2, 3), step)
+                gt_point_dict = poscar.box2pos(gt_box[0].detach().cpu(), real_size = self.cfg.data.real_size, threshold = 0.5)
+                pd_point_dict = poscar.box2pos(pd_box[0].detach().cpu(), real_size = self.cfg.data.real_size, threshold = 0.5)
+                img = imgs[0,(0,0,0),0].detach().cpu().permute(1,2,0).numpy()
+                pd_img = poscar.plotAtom(img, pd_point_dict, scale = self.cfg.data.real_size)
+                gt_img = poscar.plotAtom(img, gt_point_dict, scale = self.cfg.data.real_size)
+                img = make_grid(torch.from_numpy(np.asarray([gt_img, pd_img])).permute(0, 3, 1, 2)) # B H W C
+                self.tb_writer.add_image("Train/Out IMG", img, step)
 
             self.tb_writer.add_scalar(
                 f"TRAIN/LR_rate", self.OPT.param_groups[0]['lr'], step)
 
-            self.tb_writer.add_scalars(
-                f"TRAIN", {key: value.last for key, value in T_dict.items()}, step)
+            for key, value in T_dict.items():
+                self.tb_writer.add_scalar(f"Train/{key}", value.last, step)
 
             # log Metrics dict
             for e in ["O", "H"]:
@@ -256,7 +225,6 @@ class Trainer():
         it_loader = iter(self.valid_loader)
 
         self.net.eval()
-        self.reg.eval()
         
         T_dict = self.get_dict()
 
@@ -269,7 +237,7 @@ class Trainer():
 
             imgs = imgs.cuda(non_blocking=True)
             gt_box = gt_box.cuda(non_blocking=True)
-            pd_box = self.reg(self.net(imgs))
+            pd_box = self.net(imgs)
 
             loss = self.LOSS(pd_box, gt_box)
 
@@ -282,8 +250,8 @@ class Trainer():
             pbar.update(1)
 
             # log Valid dict
-            self.tb_writer.add_scalars(
-                f"VALID", {key: value.last for key, value in T_dict.items()}, step)
+            for key, value in T_dict.items():
+                self.tb_writer.add_scalar(f"Valid/{key}", value.last, step)
         # -------------------------------------------
 
         pbar.update(1)
@@ -303,8 +271,7 @@ class Trainer():
 
             log = []
             name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
-            self.net.save(path=f"{self.work_dir}/unet_{name}")
-            self.reg.save(path=f"{self.work_dir}/reg_{name}")
+            save_model(self.net, f"{self.work_dir}/unet_{name}")
             log.append(f"Saved a new net: {name}")
 
             for i in log:

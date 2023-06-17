@@ -253,6 +253,36 @@ class poscar():
             return cls.nms(pd_pos, radius, recusion - 1)
     
     @classmethod
+    def plotAtom(cls, 
+                 bg: torch.Tensor | np.ndarray, 
+                 x: dict[str, torch.Tensor] | torch.Tensor, 
+                 order = ("none", "O", "H"), 
+                 color = {"O": (255, 0, 0), "H": (255, 255, 255)}, 
+                 radius = {"O": 0.7, "H": 0.4},
+                 scale = (1.0, 1.0, 1.0)
+                ) -> np.ndarray:
+        """bg should be HWC format, points_dict should be in CZXY format"""
+        if isinstance(bg, torch.Tensor):
+            bg = bg.cpu().numpy()
+        if isinstance(x, torch.Tensor):
+            points_dict = cls.czxy2pos(x, order)
+        else:
+            points_dict = x
+        bg = bg.copy()
+        zoom = (0, *bg.shape[:2]) / np.asarray(scale)
+        points_dict = {k: v * zoom for k, v in points_dict.items()}
+        for elem, pos in points_dict.items():
+            if isinstance(pos, torch.Tensor):
+                pos = pos.numpy()
+            pos = pos.astype(int)[...,:0:-1] # y x format
+            c = color[elem]
+            r = int(radius[elem] * zoom[1])
+            for p in pos:
+                bg = cv2.circle(bg, p, r, c, -1)
+                bg = cv2.circle(bg, p, r, (255, 255, 255), 1)
+        return bg
+    
+    @classmethod
     def pos2poscar(cls, 
                    path,                    # the path to save poscar
                    points_dict,             # the orderdict of the elems : {"O": N *　(Z,X,Y)}

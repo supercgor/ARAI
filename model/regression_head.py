@@ -68,8 +68,10 @@ class Regression(basicModel):
 
     def _forward(self, x):
         x = self.in_blocks(x)
+        x = self.head(x)
         x = rearrange(x, "b (E C) Z X Y -> b Z X Y E C", C=4)
         x = torch.cat([x[..., (0,)], x[..., 1:].sigmoid()* 1.2 - 0.1], dim=-1).contiguous()
+        return x
 
         
 class Regression_v1(basicModel):
