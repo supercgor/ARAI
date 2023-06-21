@@ -9,9 +9,9 @@ from .utils import *
 stan_T = transforms.Compose([
     PixelShift(fill=None),
     CutOut(),
-    transforms.RandomApply([ColorJitter(B=(1.0, 1.3))], p=0.8),
+    ColorJitter(),
     Noisy(),
-    transforms.RandomApply([Blur()], p=0.9),
+    Blur(),
 ])
 
 random_T = transforms.Compose([
@@ -113,3 +113,14 @@ class AFMDataset(Dataset):
 
     def __len__(self):
         return len(self.filenames)
+    
+def afterTransform(data, trans):
+    # data: b, c, d, h, w
+    after = []
+    data = data.permute(0, 2, 1, 3, 4)
+    for d in data:
+        after.append(trans(d))
+    after = torch.stack(after)
+    after = after.permute(0, 2, 1, 3, 4)
+    return after
+    

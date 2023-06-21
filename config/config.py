@@ -31,8 +31,7 @@ _C.model = CN()
 _C.model.checkpoint = "tune_UNet_strong_baseline" # checkpoint name
 # use net
 _C.model.fea = "tune_unet_CP07_LOSS0.0549.pkl"
-_C.model.reg = "tune_reg_CP07_LOSS0.0549.pkl"
-_C.model.cyc = ""
+_C.model.cyc = "/gpfs/share/home/2000012508/ML2023/ARAI/model/pretrain/cyclenet_v0"
 _C.model.channels = 32 # the init channels number
 _C.model.inp_size = (16, 128, 128) # the size of input. (Z, X, Y)
 _C.model.out_size = (4, 32, 32) # the size of output (Z, X, Y)

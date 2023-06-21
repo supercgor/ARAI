@@ -2,20 +2,19 @@ import time
 import os
 import tqdm
 from collections import OrderedDict
+import numpy as np
 
 import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-from model import UNetModel, Regression
-from model.utils import basicParallel
-from itertools import chain
+from model import build_basic_model
+from model.utils import load_model
 
 from datasets import AFMDataset
 from utils import *
 from utils.metrics import metStat, analyse_cls
 from utils.criterion import modelLoss
-from utils.schedular import Scheduler
 
 if os.environ.get("USER") == "supercgor":
     from config.config import get_config
@@ -37,6 +36,7 @@ parser.add_argument("-d", "--dataset", help="Specify the dataset to use", defaul
 parser.add_argument("-f", "--filelist", help="Specify the filelist to use", default="test.filelist")
 parser.add_argument("-l", "--label", help="Specify whether to use label", default=False)
 parser.add_argument("-n", "--npy", help="Specify whether to save npy", default=True)
+parser.add_argument("-c", "--checkpoint", help="Specify the checkpoint to use", default="/home/supercgor/gitfile/ARAI/model/pretrain/unet_v0/unet_CP17_LOSS0.0331.pkl")
 
 args = parser.parse_args()
 
@@ -46,66 +46,35 @@ class Trainer():
         self.cfg = cfg
         self.label = str2bool(args.label)
         self.npy = str2bool(args.npy)
-        assert cfg.setting.device != [], "No device is specified!"
 
         self.data_path = args.dataset
+        self.model_name = args.checkpoint.split('/')[-2]
         os.makedirs(f"{self.data_path}/result", exist_ok=True)
         os.makedirs(f"{self.data_path}/npy", exist_ok=True)
-        os.makedirs(f"{self.data_path}/result/{cfg.model.checkpoint}", exist_ok=True)
-        os.makedirs(f"{self.data_path}/npy/{cfg.model.checkpoint}", exist_ok=True)
+        os.makedirs(f"{self.data_path}/result/{self.model_name}", exist_ok=True)
+        os.makedirs(f"{self.data_path}/npy/{self.model_name}", exist_ok=True)
 
-        self.work_dir = f"{cfg.path.check_root}/{cfg.model.checkpoint}"
-        self.logger = Logger(path=f"{self.data_path}/result/{cfg.model.checkpoint}",elem=cfg.data.elem_name,split=cfg.setting.split)
+        self.work_dir = "/".join(args.checkpoint.split("/")[:-1])
+        self.logger = Logger(path=f"{self.data_path}/result/{self.model_name}",elem=cfg.data.elem_name,split=cfg.setting.split)
 
         self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/test")
 
-        self.net = UNetModel(image_size=(16, 128, 128),
-                             in_channels=1,
-                             model_channels=32,
-                             out_channels=32,
-                             num_res_blocks=2,
-                             attention_resolutions=(8,),
-                             dropout=0.0,
-                             channel_mult=(1, 2, 4, 4),
-                             dims=3,
-                             num_heads=4,
-                             time_embed=None,
-                             use_checkpoint=False).cuda()
+        self.net = build_basic_model().cuda().eval()
 
-        self.reg = Regression(in_channels=32, out_channels=8).cuda()
-
-        log = []
-
-        load = {"net": f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}",
-                "reg": f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.reg}"}
-
-        for key, name in load.items():
-            if len(cfg.setting.device) >= 2:
-                setattr(self, key,
-                        basicParallel(getattr(self, key), device_ids=cfg.setting.device))
-            if name == "":
-                continue
-            try:
-                getattr(self, key).load(name, pretrained=False)
-                log.append(f"Loade model {key} from {name}")
-            except (FileNotFoundError, IsADirectoryError):
-                log.append(f"Model {key} loading warning, {name}")
-        for l in log:
-            self.logger.info(l)
-
-        self.model = nn.Sequential(self.net, self.reg)
-        self.model = self.model.eval()
+        load_model(self.net, args.checkpoint, True)
 
         self.analyse = analyse_cls(threshold=cfg.model.threshold).cuda()
         self.LOSS = modelLoss(pos_w=cfg.criterion.pos_weight).cuda()
 
         pred_data = AFMDataset(self.data_path,
                                self.cfg.data.elem_name,
-                               file_list=args.filelist,
-                               img_use=self.cfg.data.img_use,
-                               model_inp=self.cfg.model.inp_size,
-                               model_out=self.cfg.model.out_size,
-                               label=self.label)
+                               file_list = args.filelist,
+                               transform = None,
+                               img_use = None,
+                               random_layer=False,
+                               model_inp = self.cfg.model.inp_size,
+                               model_out = self.cfg.model.out_size,
+                               label = self.label)
 
         self.pred_loader = DataLoader(pred_data,
                                       batch_size=1,
@@ -122,7 +91,7 @@ class Trainer():
         it_loader = iter(self.pred_loader)
 
         pbar = tqdm.tqdm(
-            total=iter_times - 1, desc=f"{self.cfg.model.checkpoint} - Test", position=0, leave=True, unit='it')
+            total=iter_times - 1, desc=f"{args.checkpoint} - Test", position=0, leave=True, unit='it')
 
         loss = metStat()
         i = 0
@@ -134,7 +103,7 @@ class Trainer():
 
             imgs = imgs.cuda()
 
-            pd_box = self.model(imgs)
+            pd_box = self.net(imgs)
 
             if self.label:
                 gt_box = gt_box.cuda()
@@ -145,12 +114,9 @@ class Trainer():
                 points_dict = poscar.box2pos(x,
                                real_size=self.cfg.data.real_size,
                                threshold=self.cfg.model.threshold)
-                poscar.pos2poscar(f"{self.data_path}/result/{self.cfg.model.checkpoint}/{filename}.poscar", points_dict)
+                poscar.pos2poscar(f"{self.data_path}/result/{self.model_name}/{filename}.poscar", points_dict)
                 if self.npy:
-                    os.makedirs(
-                        f"{self.data_path}/npy/{self.cfg.model.checkpoint}", exist_ok=True)
-                    torch.save(x.cpu().numpy(
-                    ), f"{self.data_path}/npy/{self.cfg.model.checkpoint}/{filename}.npy")
+                    np.save(f"{self.data_path}/npy/{self.model_name}/{filename}.npy", x.cpu().numpy())
 
             pbar.set_postfix(file=filenames[0])
             pbar.update(1)

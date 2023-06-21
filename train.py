@@ -144,10 +144,7 @@ class Trainer():
 
     def train(self, epoch):
         # -------------------------------------------
-
-        accu = self.cfg.setting.batch_accumulation
-
-        iter_times = len(self.train_loader) // accu
+        iter_times = len(self.train_loader)
         
         it_loader = iter(self.train_loader)
 
@@ -162,20 +159,18 @@ class Trainer():
         i = 0
         while i < iter_times:
             step = (epoch-1) * iter_times + i
-            for t in range(accu):
-                # imgs : (B, C, D, H, W), gt_box : (B, D, H, W, 2, 4), filenames : (B)
-                imgs, gt_box, filenames = next(it_loader)
-                imgs = imgs.cuda(non_blocking=True)
-                gt_box = gt_box.cuda(non_blocking=True)
-                pd_box = self.net(imgs)
-                loss = self.LOSS(pd_box, gt_box)
-                loss.backward()
+            imgs, gt_box, filenames = next(it_loader) # imgs : (B, C, D, H, W), gt_box : (B, D, H, W, 2, 4), filenames : (B)
+            imgs = imgs.cuda(non_blocking=True)
+            gt_box = gt_box.cuda(non_blocking=True)
+            pd_box = self.net(imgs)
+            loss = self.LOSS(pd_box, gt_box)
+            loss.backward()
 
-                match = self.analyse(pd_box, gt_box)
-                T_dict['Loss'].add(loss)
+            match = self.analyse(pd_box, gt_box)
+            T_dict['Loss'].add(loss)
 
-                i += 1
-                pbar.update(1)
+            i += 1
+            pbar.update(1)
 
             grad = nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.setting.clip_grad, error_if_nonfinite=True)
 
@@ -211,7 +206,7 @@ class Trainer():
                     self.tb_writer.add_scalars(
                         f"TRAIN/{e} {l}", {key: match[e, j, key] for key in ["AP", "AR"]}, step)
 
-        # --------------------------------  -----------
+        # -------------------------------------------
         pbar.update(1)
         pbar.close()
         return {**T_dict, "MET": self.analyse.summary()}

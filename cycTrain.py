@@ -1,13 +1,14 @@
-from datasets import (PixelShift, Noisy, Blur, ColorJitter)
+from datasets import (PixelShift, Blur, ColorJitter, CutOut, Noisy)
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-import torchvision
+from torchvision.transforms import Compose
+from torchvision.utils import make_grid
 
-from model import UNetModel, NLayerDiscriminator
-from model.utils import basicParallel
+from model import build_cyc_model
+from model.utils import save_model, load_model
 from datasets import AFMDataset
 
 from utils import *
@@ -18,6 +19,7 @@ import tqdm
 import time
 import os
 from itertools import chain
+from copy import deepcopy
 
 user = os.environ.get("USER") == "supercgor"
 if user:
@@ -31,9 +33,8 @@ class Trainer():
         cfg = get_config()
         self.cfg = cfg
 
-        self.epochs = 50
-
-        assert cfg.setting.device != [], "No device is specified!"
+        devices = list(range(torch.cuda.device_count()))
+        batch_size = len(devices)
 
         self.work_dir = f"{cfg.path.check_root}/CycleTrain_{time.strftime('%Y%m%d-%H%M%S', time.localtime())}"
         os.makedirs(self.work_dir, exist_ok=True)
@@ -46,113 +47,71 @@ class Trainer():
                              elem=cfg.data.elem_name,
                              split=cfg.setting.split)
 
-        self.A2B = UNetModel(image_size=(16, 128, 128),
-                             in_channels=1,
-                             model_channels=32,
-                             out_channels=1,
-                             num_res_blocks=1,
-                             attention_resolutions=[],
-                             dropout=0.1,
-                             channel_mult=(1, 2, 2, 4),
-                             dims=3,
-                             time_embed=None,
-                             use_checkpoint=False).init().cuda()
+        self.logger.info(f"devices: {devices}")
 
-        self.B2A = UNetModel(image_size=(16, 128, 128),
-                             in_channels=1,
-                             model_channels=32,
-                             out_channels=1,
-                             num_res_blocks=1,
-                             attention_resolutions=[],
-                             dropout=0.1,
-                             channel_mult=(1, 2, 2, 4),
-                             dims=3,
-                             time_embed=None,
-                             use_checkpoint=False).init().cuda()
+        self.G_S2T, self.D_S = build_cyc_model(disc=True)
 
-        self.A = NLayerDiscriminator(in_channels=1,
-                                     model_channels=32,
-                                     channel_mult=(1, 2, 4, 8),
-                                     max_down_mult=(4, 8, 8),
-                                     reduce="mean").init().cuda()
+        self.logger.info(f"Generator parameters: {sum(p.numel() for p in self.G_S2T.parameters() if p.requires_grad)}")
+        self.logger.info(f"Discriminator parameters: {sum(p.numel() for p in self.D_S.parameters() if p.requires_grad)}")
+        
+        self.G_S2T.cuda()
+        self.D_S.cuda()
 
-        self.B = NLayerDiscriminator(in_channels=1,
-                                     model_channels=32,
-                                     channel_mult=(1, 2, 4, 8),
-                                     max_down_mult=(4, 8, 8),
-                                     reduce="mean").init().cuda()
+        self.G_T2S, self.D_T = deepcopy(self.G_S2T), deepcopy(self.D_S)
 
-        load = {"A2B": "",
-                "B2A": "",
-                "A": "",
-                "B": ""}
+        if len(devices) >= 2:
+            self.G_S2T = nn.DataParallel(self.G_S2T, device_ids=devices)
+            self.G_T2S = nn.DataParallel(self.G_T2S, device_ids=devices)
+            self.D_S = nn.DataParallel(self.D_S, device_ids=devices)
+            self.D_T = nn.DataParallel(self.D_T, device_ids=devices)
 
-        log = []
-        for key, name in load.items():
-            if len(cfg.setting.device) >= 2:
-                setattr(self, key,
-                        basicParallel(getattr(self, key), device_ids=cfg.setting.device))
-            if name == "":
-                continue
-            try:
-                getattr(self, key).load(name, pretrained=True)
-                log.append(f"Loade model {key} from {name}")
-            except (FileNotFoundError, IsADirectoryError):
-                log.append(f"Model {key} loading warning, {name}")
+        self.models = {"G_S2T": self.G_S2T, "G_T2S": self.G_T2S,
+                       "D_S": self.D_S, "D_T": self.D_T}
 
-        self.OPTG = torch.optim.Adam(chain(self.A2B.parameters(
-        ), self.B2A.parameters()), lr=1e-4, betas=(0.5, 0.999))
+        self.G_opt = torch.optim.Adam(
+            self.G_paras, lr=2e-4, betas=(0.5, 0.999))
+        self.D_opt = torch.optim.SGD(self.D_paras, lr=2e-4)
 
-        self.OPTD = torch.optim.Adam(
-            chain(self.A.parameters(), self.B.parameters()), lr=1e-4, betas=(0.5, 0.999))
+        self.G_scheduler = Scheduler(
+            self.G_opt, warmup_steps=50, decay_factor=4000)
+        self.D_scheduler = Scheduler(
+            self.D_opt, warmup_steps=50, decay_factor=4000)
 
-        self.SCHE_G = Scheduler(
-            self.OPTG, warmup_steps=5, decay_factor=1500)
-        self.SCHE_D = Scheduler(
-            self.OPTD, warmup_steps=5, decay_factor=1500)
+        trans_S = Compose([PixelShift(fill=None), CutOut(), ColorJitter(), Noisy(), Blur()])
 
-        A_trans = torchvision.transforms.Compose([
-            torchvision.transforms.RandomApply([PixelShift(fill=None)], p=0.5),
-            torchvision.transforms.RandomApply([Noisy()], p=0.3),
-            torchvision.transforms.RandomApply([Blur()], p=0.3),
-            torchvision.transforms.RandomApply([ColorJitter()], p=0.3),
-        ])
+        source_data = AFMDataset(f"{self.cfg.path.data_root}/bulkiceMix",
+                                 self.cfg.data.elem_name,
+                                 file_list="train.filelist",
+                                 transform=trans_S,
+                                 img_use=self.cfg.data.img_use,
+                                 model_inp=self.cfg.model.inp_size,
+                                 model_out=self.cfg.model.out_size,
+                                 label=False)
 
-        A_data = AFMDataset(f"{self.cfg.path.data_root}/bulkiceHup",
-                            self.cfg.data.elem_name,
-                            file_list="train.filelist",
-                            transform=A_trans,
-                            img_use=self.cfg.data.img_use,
-                            model_inp=self.cfg.model.inp_size,
-                            model_out=self.cfg.model.out_size,
-                            label = False)
+        self.source_loader = DataLoader(source_data, batch_size=batch_size, num_workers=6,
+                                        pin_memory=self.cfg.setting.pin_memory, shuffle=True, drop_last=True)
 
-        self.A_loader = DataLoader(A_data,
-                                   batch_size = 4,
-                                   num_workers = 6,
-                                   pin_memory=self.cfg.setting.pin_memory,
-                                   shuffle=True,
-                                   drop_last=True)
+        trans_T = Compose([Blur(sigma = 0.5), ColorJitter()])
 
-        B_trans = torchvision.transforms.Compose([
-            Noisy(0.05),
-            torchvision.transforms.RandomApply([Blur()], p=0.3),
-            ColorJitter()])
+        target_data = AFMDataset(f"{self.cfg.path.data_root}/bulkexpR",
+                                 self.cfg.data.elem_name,
+                                 file_list="allbetter.filelist",
+                                 transform=trans_T,
+                                 img_use=self.cfg.data.img_use,
+                                 model_inp=self.cfg.model.inp_size,
+                                 model_out=self.cfg.model.out_size,
+                                 label=False)
 
-        B_data = AFMDataset(f"{self.cfg.path.data_root}/bulkexpR",
-                            self.cfg.data.elem_name,
-                            file_list="trainbetter.filelist",
-                            transform=B_trans,
-                            img_use=self.cfg.data.img_use,
-                            model_inp=self.cfg.model.inp_size,
-                            model_out=self.cfg.model.out_size,
-                            label = False)
+        self.target_loader = DataLoader(target_data, batch_size=batch_size, num_workers=6,
+                                        pin_memory=self.cfg.setting.pin_memory, shuffle=True, drop_last=True)
 
-        self.B_loader = DataLoader(B_data,
-                                   batch_size = 4,
-                                   num_workers = 6,
-                                   pin_memory=self.cfg.setting.pin_memory,
-                                   drop_last=True)
+    @property
+    def G_paras(self):
+        return chain(self.G_S2T.parameters(), self.G_T2S.parameters())
+
+    @property
+    def D_paras(self):
+        return chain(self.D_S.parameters(), self.D_T.parameters())
 
     def fit(self):
         self.best = {'loss': metStat(mode="min")}
@@ -160,7 +119,7 @@ class Trainer():
 
         self.logger.info(f"Start training cycleGAN")
 
-        for epoch in range(1, self.epochs + 1):
+        for epoch in range(1, 200 + 1):
             epoch_start_time = time.time()
 
             log_train_dic = self.train(epoch)
@@ -169,29 +128,84 @@ class Trainer():
 
             self.save(epoch, log_train_dic)
 
-            self.logger.info(
-                f"Spend time: {time.time() - epoch_start_time:.2f}s")
+            log = [f"Epoch {epoch} - Cycle Train"]
+            log += [f"Used Time: {time.time() - epoch_start_time:.2f} s"]
+            log += [f"Used Memory: {torch.cuda.max_memory_allocated() / 1024 ** 2:.0f} MB / {torch.cuda.memory_reserved() / 1024 ** 2:.0f} MB"]
+            log += [f"Loss: {log_train_dic['G_S2T']:.4f} / {log_train_dic['G_T2S']:.4f} / {log_train_dic['D_S']:.4f} / {log_train_dic['D_T']:.4f}"]
+            log += [f"Grad: {log_train_dic['G']:.4f} / {log_train_dic['D']:.4f}"]
+            log += [f"LR rate: {self.G_opt.param_groups[0]['lr']:.6f}"]
+            log += [f'End training epoch: {epoch:0d}']
+            for i in log:
+                self.logger.info(i)
 
-            self.logger.info(
-                f"Used memory: {torch.cuda.memory_allocated() / 1024 ** 3:.2f}GB")
+    def train_passdata(self, source_real, target_real):
+        self.source_real = source_real.cuda()
+        self.target_real = target_real.cuda()
+        self.source_fake = self.G_T2S(self.target_real).sigmoid()
+        self.target_fake = self.G_S2T(self.source_real).sigmoid()
+        self.source_idt = self.G_T2S(self.source_real).sigmoid()
+        self.target_idt = self.G_S2T(self.target_real).sigmoid()
+        self.source_cyc = self.G_T2S(self.target_fake).sigmoid()
+        self.target_cyc = self.G_S2T(self.source_fake).sigmoid()
 
-            self.logger.info(f'End training epoch: {epoch:0d}')
+    def train_disc(self):
+        for name, model in self.models.items():
+            model.requires_grad_(
+                True) if "D" in name else model.requires_grad_(False)
+            
+        with torch.no_grad():
+            source_fake = self.G_T2S(self.target_real).sigmoid()
+            target_fake = self.G_S2T(self.source_real).sigmoid()
+            
+        pred_SR = self.D_S(self.source_real).sigmoid()
+        pred_SF = self.D_S(source_fake).sigmoid()
+        pred_TR = self.D_T(self.target_real).sigmoid()
+        pred_TF = self.D_T(target_fake).sigmoid()
+
+        loss_DS = (F.mse_loss(pred_SR, torch.ones_like(pred_SR)) +
+                   F.mse_loss(pred_SF, torch.zeros_like(pred_SF))) / 2
+        loss_DT = (F.mse_loss(pred_TR, torch.ones_like(pred_TR)) +
+                   F.mse_loss(pred_TF, torch.zeros_like(pred_TF))) / 2
+
+        return loss_DS, loss_DT
+
+    def train_gen(self):
+        for name, model in self.models.items():
+            model.requires_grad_(True) if "G" in name else model.requires_grad_(False)
+        
+        with torch.no_grad():
+            pred_SF = self.D_S(self.source_fake).sigmoid()
+            pred_TF = self.D_T(self.target_fake).sigmoid()
+
+        loss_GS2T_cls = F.mse_loss(pred_SF, torch.ones_like(pred_SF)) * 2
+        loss_GS2T_idt = F.l1_loss(self.source_idt, self.source_real) * 1
+        loss_GS2T_cyc = F.l1_loss(self.source_cyc, self.source_real) * 10
+
+        loss_GT2S_cls = F.mse_loss(pred_TF, torch.ones_like(pred_TF)) * 2
+        loss_GT2S_idt = F.l1_loss(self.target_idt, self.target_real) * 1
+        loss_GT2S_cyc = F.l1_loss(self.target_cyc, self.target_real) * 10
+
+        loss_GS2T = (loss_GS2T_cls + loss_GS2T_idt + loss_GS2T_cyc) / 13
+        loss_GT2S = (loss_GT2S_cls + loss_GT2S_idt + loss_GT2S_cyc) / 13
+
+        loss_item = {"G_S2T_cls": loss_GS2T_cls.item(), 
+                     "G_S2T_idt": loss_GS2T_idt.item(), 
+                     "G_S2T_cyc": loss_GS2T_cyc.item(), 
+                     "G_T2S_cls": loss_GT2S_cls.item(), 
+                     "G_T2S_idt": loss_GT2S_idt.item(), 
+                     "G_T2S_cyc": loss_GT2S_cyc.item()}
+
+        return loss_GS2T, loss_GT2S, loss_item
 
     def train(self, epoch):
-        A_iter = iter(self.A_loader)
-        B_iter = iter(self.B_loader)
-        gan_opa = 3
-        max_iter = min(len(A_iter), len(B_iter)) // (1 + gan_opa)
-        Loss = {
-            "A2B": metStat(),
-            "B2A": metStat(),
-            "A": metStat(),
-            "B": metStat()
-        }
-        Grad = {
-            "G": metStat(),
-            "D": metStat()
-        }
+
+        A_iter = iter(self.source_loader)
+        B_iter = iter(self.target_loader)
+        max_iter = min(len(A_iter), len(B_iter), 1001)
+
+        Loss = {"G_S2T": metStat(), "G_T2S": metStat(),
+                "D_S": metStat(), "D_T": metStat()}
+        Grad = {"G": metStat(), "D": metStat()}
 
         pbar = tqdm.tqdm(
             total=max_iter - 1, desc=f"Epoch {epoch} - Cycle Train", position=0, leave=True, unit='it')
@@ -199,94 +213,66 @@ class Trainer():
         i = 0
         while i < max_iter:
             step = (epoch - 1) * max_iter + i
-            self.A.requires_grad_(True)
-            self.B.requires_grad_(True)
-            self.A2B.requires_grad_(False)
-            self.B2A.requires_grad_(False)
-            with torch.no_grad():
-                real_A, _ = next(A_iter)
-                real_B, _ = next(B_iter)
-                real_A, real_B = real_A.cuda(), real_B.cuda()
-                fake_B, fake_A = self.A2B(
-                    real_A).sigmoid(), self.B2A(real_B).sigmoid()
-            self.OPTD.zero_grad()
-            P_A, R_A = self.A(fake_A).sigmoid(), self.A(real_A).sigmoid()
-            P_B, R_B = self.B(fake_B).sigmoid(), self.B(real_B).sigmoid()
-            L_A = (F.mse_loss(P_A, torch.zeros_like(P_A)) +
-                   F.mse_loss(R_A, torch.ones_like(R_A))) / 2
-            L_A.backward()
-            L_B = (F.mse_loss(P_B, torch.zeros_like(P_B)) +
-                   F.mse_loss(R_B, torch.ones_like(R_B))) / 2
-            L_B.backward()
+            self.train_passdata(next(A_iter)[0], next(B_iter)[0])
+            # Train Discriminator
+            self.D_opt.zero_grad()
+            loss_DS, loss_DT = self.train_disc()
+            (loss_DS + loss_DT).backward()
             GD = nn.utils.clip_grad_norm_(
-                chain(self.A.parameters(), self.B.parameters()), 100, error_if_nonfinite=False)
-            self.OPTD.step()
+                self.D_paras, 10, error_if_nonfinite=True)
+            self.D_opt.step()
+
             Grad["D"].add(GD)
-            Loss["A"].add(L_A)
-            Loss["B"].add(L_B)
-            
-            for t in range(gan_opa):
-                self.OPTG.zero_grad()
-                self.A.requires_grad_(False)
-                self.B.requires_grad_(False)
-                self.A2B.requires_grad_(True)
-                self.B2A.requires_grad_(True)
+            Loss["D_S"].add(loss_DS)
+            Loss["D_T"].add(loss_DT)
 
-                real_A, _ = next(A_iter)
-                real_B, _ = next(B_iter)
-                real_A, real_B = real_A.cuda(), real_B.cuda()
-                fake_B, fake_A = self.A2B(
-                    real_A).sigmoid(), self.B2A(real_B).sigmoid()
-                
-                P_A, R_A = self.A(fake_A).sigmoid(), self.A(real_A).sigmoid()
-                P_B, R_B = self.B(fake_B).sigmoid(), self.B(real_B).sigmoid()
+            # Train Generator
+            self.G_opt.zero_grad()
+            loss_GS2T, loss_GT2S, loss_dic = self.train_gen()
+            (loss_GS2T + loss_GT2S).backward()
+            GG = nn.utils.clip_grad_norm_(
+                self.G_paras, 10, error_if_nonfinite=True)
+            self.G_opt.step()
 
-                L_B2A = (F.mse_loss(P_A, torch.ones_like(P_A)) +
-                        F.mse_loss(R_A, torch.zeros_like(R_A))) * 2 + \
-                    10 * F.l1_loss(self.B2A(fake_B).sigmoid(), real_A) + \
-                    0.5 * F.l1_loss(self.B2A(real_A).sigmoid(), real_A)
+            Loss["G_S2T"].add(loss_GS2T)
+            Loss["G_T2S"].add(loss_GT2S)
+            Grad["G"].add(GG)
 
-                L_B2A.backward(retain_graph=True)
-                L_A2B = (F.mse_loss(P_B, torch.ones_like(P_B)) +
-                        F.mse_loss(R_B, torch.zeros_like(R_B))) * 2 + \
-                    10 * F.l1_loss(self.A2B(fake_A).sigmoid(), real_B) + \
-                    0.5 * F.l1_loss(self.A2B(real_B).sigmoid(), real_B)
-                    
-                L_A2B.backward()
-                GG = nn.utils.clip_grad_norm_(
-                    chain(self.A2B.parameters(), self.B2A.parameters()), 100, error_if_nonfinite=True)
-                self.OPTG.step()
-                Loss["A2B"].add(L_A2B)
-                Loss["B2A"].add(L_B2A)
-                Grad["G"].add(GG)
-
-            self.SCHE_D.step()
-            self.SCHE_G.step()
+            self.G_scheduler.step()
+            self.D_scheduler.step()
 
             pbar.set_postfix(**{key: value.last for key, value in Loss.items()},
                              **{key: value.last for key, value in Grad.items()})
             pbar.update(1)
 
+            self.tb_logger.add_scalar(
+                "TRAIN/LR_rate", self.G_opt.param_groups[0]['lr'], step)
+
+            self.tb_logger.add_scalars("TRAIN/Loss item", loss_dic, step)
+
             self.tb_logger.add_scalars(
-                "Loss", {key: value.last for key, value in Loss.items()}, step)
+                "TRAIN/Loss", {key: value.last for key, value in Loss.items()}, step)
             self.tb_logger.add_scalars(
-                "Grad", {key: value.last for key, value in Grad.items()}, step)
+                "TRAIN/Grad", {key: value.last for key, value in Grad.items()}, step)
             if i % 100 == 0:
-                self.tb_logger.add_image("GAN Image (RealA & FakeB)", torchvision.utils.make_grid(
-                    torch.cat([real_A[0], fake_B[0]], dim=1).permute(1, 0, 2, 3).cpu(), nrow=16), step)
-                self.tb_logger.add_image("GAN Image B (RealB & Fake)", torchvision.utils.make_grid(
-                    torch.cat([real_B[0], fake_A[0]], dim=1).permute(1, 0, 2, 3).cpu(), nrow=16), step)
-            
+                imgs = torch.cat([self.source_real[0, :, 0::2],
+                                  self.target_fake[0, :, 0::2],
+                                  self.source_fake[0, :, 0::2],
+                                  self.target_real[0, :, 0::2]], dim=1)
+                self.tb_logger.add_image("GAN Image (RealA & FakeB - FakeA & RealB)", make_grid(
+                    imgs.permute(1, 0, 2, 3).cpu(), nrow=16), step)
+                del imgs
             i += 1
-        
+            print(torch.cuda.max_memory_allocated() / 1024 / 1024)
+
         pbar.update()
         pbar.close()
         return {key: value() for key, value in chain(Loss.items(), Grad.items())}
 
     def save(self, epoch, log_dic):
         met = 0
-        met += log_dic["A2B"]
-        met += log_dic["B2A"]
+        met += log_dic["G_S2T"]
+        met += log_dic["G_T2S"]
 
         logger = self.logger
 
@@ -294,18 +280,17 @@ class Trainer():
             self.best_met = met
 
             log = []
-            name = f"CP{epoch:02d}_LOSS{met:.4f}.pkl"
-            self.A2B.save(path=f"{self.work_dir}/A2B_{name}")
-            self.B2A.save(path=f"{self.work_dir}/B2A_{name}")
-            self.A.save(path=f"{self.work_dir}/A_{name}")
-            self.B.save(path=f"{self.work_dir}/B_{name}")
-            log.append(f"Saved a new net: {name}")
-
-            for i in log:
-                logger.info(i)
+            subname = f"CP{epoch:02d}_LOSS{met:.4f}.pkl"
+            for name, model in self.models.items():
+                save_model(model, f"{self.work_dir}/{name}_{subname}")
+            log.append(f"Saved a new net: {subname}")
 
         else:
             logger.info(f"No model was saved")
+
+        for i in log:
+            logger.info(i)
+
 
 if __name__ == "__main__":
     Trainer().fit()

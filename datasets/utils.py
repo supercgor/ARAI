@@ -384,7 +384,7 @@ class Noisy(nn.Module):
             if mode is None:
                 continue
             else:
-                noise = torch.FloatTensor(x.shape[1:])
+                noise = torch.empty(x.shape[1:], device=x.device)
                 if noisy == "normal":
                     noise.normal_(0, self.int)
                 elif noisy == "uniform":
@@ -415,6 +415,22 @@ class Blur(nn.Module):
         self.G = transforms.GaussianBlur(ksize, sigma)
 
     def forward(self, x):
+        sigma = random.uniform(0, self.sigma)
+        trans = transforms.GaussianBlur(self.ksize, sigma)
         for i in range(x.shape[0]):
-            x[i] = self.G(x[i])
+            x[i] = trans(x[i])
+        return x
+
+class domainTransfer(nn.Module):
+    def __init__(self, module, offset = 0.0):
+        super().__init__()
+        self.module = module
+        self.offset = offset
+    
+    def forward(self, x):
+        x = x.unsqueeze(0).transpose(1, 2)
+        alpha = (1 - torch.randn((1, 1, 1, 1, 1), device=x.device).abs()) + self.offset
+        alpha.clamp_(0, 1)
+        x = self.module(x).sigmoid() * alpha + x * (1 - alpha)
+        x = x.transpose(1, 2).squeeze(0)
         return x

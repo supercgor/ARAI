@@ -44,9 +44,8 @@ _C.model = CN()
 # checkpoint name
 _C.model.checkpoint = "UNet_strong_baseline"
 # use net
-_C.model.fea = ""
-_C.model.reg = ""
-_C.model.cyc = "A2B_CP11_LOSS2.6035.pkl"
+_C.model.fea = "/gpfs/share/home/2000012508/ML2023/ARAI/model/pretrain/unet_v0/unet_CP03_LOSS0.0627.pkl"
+_C.model.cyc    = "/gpfs/share/home/2000012508/ML2023/ARAI/model/pretrain/cyclenet_v1/G_S2T_CP15_LOSS0.2132.pkl"
 # the init channels number
 _C.model.channels = 32
 # the size of input and output. (Z, X, Y)
@@ -62,7 +61,7 @@ _C.model.nms = True
 # -----------------------------------------------------------------------------
 _C.data = CN()
 # use dataset smallice or bulkice
-_C.data.dataset = 'bulkiceHup'
+_C.data.dataset = 'bulkiceMix'
 # How many images will be used
 _C.data.img_use = 10
 # Element names
