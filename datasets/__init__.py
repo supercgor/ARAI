@@ -33,7 +33,7 @@ class AFMDataset(Dataset):
                  transform=stan_T,
                  img_use: None | int = 10,
                  model_inp: Tuple[str] = (16, 128, 128),
-                 model_out: Tuple[str] = (8, 32, 32),
+                 model_out: Tuple[str] = (4, 32, 32),
                  preload: bool = False,
                  fill_none: None | int = None,
                  label: bool = True,
@@ -103,6 +103,7 @@ class AFMDataset(Dataset):
             # transform the pos to bbox
             if self.label_format == "box":
                 pos = poscar.pos2box(bbox, real_size=data_package['real_size'], out_size=self.out_size, order=self.elements)
+                # print(pos.shape)
                 return data, pos, filename
             elif self.label_format == "boxncls":
                 OFFSET, CLS = poscar.pos2boxncls(bbox, real_size=data_package['real_size'], out_size=self.out_size, order=self.elements)

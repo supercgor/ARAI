@@ -7,9 +7,10 @@ import torch
 from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-
-from model import build_basic_model
+from model import build_basic_model, build_3d_model
 from model.utils import save_model, load_model
+from itertools import chain
+
 from datasets import AFMDataset
 from utils import *
 from utils.metrics import metStat, analyse_cls
@@ -19,7 +20,7 @@ from utils.schedular import Scheduler
 if os.environ.get("USER") == "supercgor":
     from config.config import get_config
 else:
-    from config.wm import get_config
+    from config.wm2 import get_config
 
 class Trainer():
     def __init__(self):
@@ -38,7 +39,8 @@ class Trainer():
         self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/train")
 
         # load the feature extractor network
-        self.net = build_basic_model(cfg).cuda()
+        # self.net = build_basic_model().cuda()
+        self.net = build_3d_model().cuda()
         
         self.logger.info(f"Network parameters: {sum([p.numel() for p in self.net.parameters()])}")
 
@@ -53,7 +55,10 @@ class Trainer():
         if len(cfg.setting.device) >= 2:
             self.net = nn.DataParallel(self.net, device_ids = cfg.setting.device)
 
-        self.analyse = analyse_cls(threshold=cfg.model.threshold).cuda()
+        self.analyse = analyse_cls(real_size = cfg.data.real_size,
+                                   lattent_size=cfg.model.out_size,
+                                   split=cfg.setting.split,
+                                   threshold=cfg.model.threshold).cuda()
         
         self.LOSS = modelLoss(pos_w=cfg.criterion.pos_weight).cuda()
         
@@ -69,7 +74,7 @@ class Trainer():
 
         train_data = AFMDataset(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}",
                                 self.cfg.data.elem_name,
-                                file_list= "train.filelist",
+                                file_list= "basal_T1[68]0_train.filelist",
                                 img_use=self.cfg.data.img_use,
                                 model_inp=self.cfg.model.inp_size,
                                 model_out=self.cfg.model.out_size)
@@ -82,7 +87,7 @@ class Trainer():
 
         valid_data = AFMDataset(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}",
                                 self.cfg.data.elem_name,
-                                file_list= "valid.filelist",
+                                file_list= "basal_T1[68]0_valid.filelist",
                                 img_use=self.cfg.data.img_use,
                                 model_inp=self.cfg.model.inp_size,
                                 model_out=self.cfg.model.out_size)
@@ -162,6 +167,7 @@ class Trainer():
             imgs = imgs.cuda(non_blocking=True)
             gt_box = gt_box.cuda(non_blocking=True)
             pd_box = self.net(imgs)
+            # print(pd_box.shape, gt_box.shape)
             loss = self.LOSS(pd_box, gt_box)
             loss.backward()
 
@@ -265,7 +271,7 @@ class Trainer():
 
             log = []
             name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
-            save_model(self.net, f"{self.work_dir}/unet_{name}")
+            save_model(self.net, f"{self.work_dir}/unet9a_{name}")
             log.append(f"Saved a new net: {name}")
 
             for i in log:

@@ -16,7 +16,7 @@ class analyse_cls(nn.Module):
     output:
         >>> {"O": "0.0-3.0A" : {"T": 100, "P": 90, "TP": 90, "FP": 10, "FN": 10, "AP": 0.7, "AR": 0.8, "SUC": 0.1}, "H": {...}}
     """
-    def __init__(self, elements: Tuple[str | None] = ("O", "H", None), real_size: Tuple[float] = (3, 25, 25), lattent_size: Tuple[float] = (8, 32, 32), ratio: float = 1.0, NMS: bool = True, sort: bool = True, threshold: float = 0.7, split: Tuple[float] = (0, 3.0), radius: Dict[str, float] = {"O": 0.740, "H": 0.528}):
+    def __init__(self, elements: Tuple[str | None] = ("O", "H", None), real_size: Tuple[float] = (3, 25, 25), lattent_size: Tuple[float] = (4, 32, 32), ratio: float = 1.0, NMS: bool = True, sort: bool = True, threshold: float = 0.7, split: Tuple[float] = (0, 3.0), radius: Dict[str, float] = {"O": 0.740, "H": 0.528}):
         super(analyse_cls, self).__init__()
         
         self.elements = elements
@@ -116,8 +116,8 @@ class analyse_cls(nn.Module):
                 AR = 1 if T == 0 else TP / T
                 AP = 0 if P == 0 else TP / P
                 out[i,j] = [T, P, TP, FP, FN, AR, AP, (P == TP and T == TP)]
-        return ElemLayerMet(out)
-
+        return ElemLayerMet(out, split = self.SPLIT)
+    
 class ElemLayerMet():
     def __init__(self, init: np.ndarray = ...,
                  elems = ("O", "H"), 
