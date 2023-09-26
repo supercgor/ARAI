@@ -5,12 +5,14 @@ from collections import OrderedDict
 
 import torch
 from torch import nn
+from torchvision.transforms import Compose
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
-
-from model import build_basic_model
+from model import build_basic_model, build_cyc_model
 from model.utils import save_model, load_model
-from datasets import AFMDataset
+
+from datasets import AFMDataset, afterTransform
+from datasets import (PixelShift, Blur, ColorJitter, CutOut, Noisy, domainTransfer)
 from utils import *
 from utils.metrics import metStat, analyse_cls
 from utils.criterion import modelLoss
@@ -26,9 +28,9 @@ class Trainer():
         cfg = get_config()
         self.cfg = cfg
 
-        assert cfg.setting.device != [], "No device is specified!"
-        
-        self.work_dir = f"{cfg.path.check_root}/Train_{time.strftime('%Y%m%d-%H%M%S', time.localtime())}"
+        devices = list(range(torch.cuda.device_count()))
+           
+        self.work_dir = f"{cfg.path.check_root}/Adapt_{time.strftime('%Y%m%d-%H%M%S', time.localtime())}"
         os.makedirs(self.work_dir, exist_ok=True)
         
         self.logger = Logger(path=self.work_dir,
@@ -36,22 +38,30 @@ class Trainer():
                              split=cfg.setting.split)
 
         self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/train")
-
-        # load the feature extractor network
-        self.net = build_basic_model(cfg).cuda()
         
-        self.logger.info(f"Network parameters: {sum([p.numel() for p in self.net.parameters()])}")
+        self.logger.info(f"devices: {devices}")
 
-        log = []
+        self.net = build_basic_model().cuda()
         
-        try:
-            log.extend(load_model(self.net, f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}"))
-            log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.fea}")
-        except (FileNotFoundError, IsADirectoryError):
-            log.append("No network is loaded, start a new model")
-            
-        if len(cfg.setting.device) >= 2:
-            self.net = nn.DataParallel(self.net, device_ids = cfg.setting.device)
+        self.logger.info(f"network parameters: {sum([p.numel() for p in self.net.parameters()])}")
+        
+        load_model(self.net, cfg.model.fea, True)
+        
+        self.logger.info(f"Load parameters from {cfg.model.fea}")
+        
+        self.cyc = build_cyc_model().cuda()
+        
+        self.logger.info(f"Cycle network parameters: {sum([p.numel() for p in self.cyc.parameters()])}")
+        
+        load_model(self.cyc, cfg.model.cyc, True)
+        
+        self.logger.info(f"Load parameters from {cfg.model.cyc}")
+        
+        self.cyc.eval()
+        self.cyc.requires_grad_(False)
+        
+        if len(devices) >= 2:
+            self.net = nn.DataParallel(self.net, device_ids=devices)
 
         self.analyse = analyse_cls(threshold=cfg.model.threshold).cuda()
         
@@ -59,23 +69,24 @@ class Trainer():
         
         self.OPT = torch.optim.AdamW(self.net.parameters(), lr=self.cfg.setting.lr, weight_decay=5e-3)
         
-        self.SCHEDULER = Scheduler(self.OPT, warmup_steps=5, decay_factor=50000)
+        self.SCHEDULER = Scheduler(self.OPT, warmup_steps=500,decay_factor=50000)
         
-        for l in log:
-            self.logger.info(l)
-
-    def fit(self):
-        # --------------------------------------------------
-
+        self.trans = Compose([PixelShift(fill = None), 
+                         CutOut(), 
+                         Blur(), 
+                         ColorJitter(), 
+                         Noisy()])
+        
         train_data = AFMDataset(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}",
                                 self.cfg.data.elem_name,
                                 file_list= "train.filelist",
                                 img_use=self.cfg.data.img_use,
+                                transform = self.trans,
                                 model_inp=self.cfg.model.inp_size,
                                 model_out=self.cfg.model.out_size)
-
+        
         self.train_loader = DataLoader(train_data,
-                                       batch_size=self.cfg.setting.batch_size,
+                                       batch_size = 6,
                                        num_workers=self.cfg.setting.num_workers,
                                        pin_memory=self.cfg.setting.pin_memory,
                                        shuffle=True)
@@ -84,14 +95,18 @@ class Trainer():
                                 self.cfg.data.elem_name,
                                 file_list= "valid.filelist",
                                 img_use=self.cfg.data.img_use,
+                                transform = self.trans,
                                 model_inp=self.cfg.model.inp_size,
                                 model_out=self.cfg.model.out_size)
         
         self.valid_loader = DataLoader(valid_data,
-                                       batch_size=self.cfg.setting.batch_size,
+                                       batch_size = 6,
                                        num_workers=self.cfg.setting.num_workers,
                                        pin_memory=self.cfg.setting.pin_memory)
 
+    def fit(self):
+        # --------------------------------------------------
+        
         self.best = {'loss': metStat(mode="min")}
         self.best_met = 9999
 
@@ -123,6 +138,8 @@ class Trainer():
             # Saver here
 
             self.save(epoch, log_valid_dic)
+
+            self.logger.info(f"Used memory: {torch.cuda.memory_allocated() / 1024 ** 3:.2f}GB")
 
             self.logger.info(
                 f"Spend time: {time.time() - epoch_start_time:.2f}s")
@@ -160,6 +177,11 @@ class Trainer():
             step = (epoch-1) * iter_times + i
             imgs, gt_box, filenames = next(it_loader) # imgs : (B, C, D, H, W), gt_box : (B, D, H, W, 2, 4), filenames : (B)
             imgs = imgs.cuda(non_blocking=True)
+            alpha = (1 - torch.randn((1, 1, 1, 1, 1), device=imgs.device).abs()).clamp(0, 1)
+            imgs = self.cyc(imgs).sigmoid() * alpha + imgs * (1 - alpha)
+            
+            # imgs = afterTransform(imgs, self.trans)
+            
             gt_box = gt_box.cuda(non_blocking=True)
             pd_box = self.net(imgs)
             loss = self.LOSS(pd_box, gt_box)
@@ -187,11 +209,12 @@ class Trainer():
                 self.tb_writer.add_images("Train/In IMG", imgs[0].permute(1, 0, 2, 3), step)
                 gt_point_dict = poscar.box2pos(gt_box[0].detach().cpu(), real_size = self.cfg.data.real_size, threshold = 0.5)
                 pd_point_dict = poscar.box2pos(pd_box[0].detach().cpu(), real_size = self.cfg.data.real_size, threshold = 0.5)
-                img = imgs[0,(0,0,0),0].detach().cpu().permute(1,2,0).numpy()
-                pd_img = poscar.plotAtom(img, pd_point_dict, scale = self.cfg.data.real_size)
-                gt_img = poscar.plotAtom(img, gt_point_dict, scale = self.cfg.data.real_size)
-                img = make_grid(torch.from_numpy(np.asarray([gt_img, pd_img])).permute(0, 3, 1, 2)) # B H W C
-                self.tb_writer.add_image("Train/Out IMG", img, step)
+                imgs = imgs[0,(0,0,0),0].detach().cpu().permute(1,2,0).numpy()
+                pd_img = poscar.plotAtom(imgs, pd_point_dict, scale = self.cfg.data.real_size)
+                gt_img = poscar.plotAtom(imgs, gt_point_dict, scale = self.cfg.data.real_size)
+                imgs = make_grid(torch.from_numpy(np.asarray([gt_img, pd_img])).permute(0, 3, 1, 2)) # B H W C
+                self.tb_writer.add_image("Train/Out IMG", imgs, step)
+                del imgs, gt_img, pd_img
 
             self.tb_writer.add_scalar(
                 f"TRAIN/LR_rate", self.OPT.param_groups[0]['lr'], step)
@@ -215,7 +238,7 @@ class Trainer():
         # -------------------------------------------
 
         T_dict = self.get_dict()
-        len_loader = len(self.valid_loader)
+        len_loader = min(len(self.valid_loader), 1000)
         it_loader = iter(self.valid_loader)
 
         self.net.eval()
@@ -230,6 +253,11 @@ class Trainer():
             imgs, gt_box, filenames = next(it_loader)
 
             imgs = imgs.cuda(non_blocking=True)
+            alpha = (1 - torch.randn((1, 1, 1, 1, 1), device=imgs.device).abs()).clamp(0, 1)
+            imgs = self.cyc(imgs).sigmoid() * alpha + imgs * (1 - alpha)
+            
+            # imgs = afterTransform(imgs, self.trans)
+            
             gt_box = gt_box.cuda(non_blocking=True)
             pd_box = self.net(imgs)
 

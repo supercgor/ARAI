@@ -1,41 +1,35 @@
-from utils.tools import CfgNode as CN
+from . import CfgNode as CN
 
 _C = CN()
 # -----------------------------------------------------------------------------
 # Load settings
 # -----------------------------------------------------------------------------
 _C.path = CN()
-# the root of all file
-_C.path.root = '/home/supercgor/gitfile'
 # datasets path
-_C.path.data_root = '/home/supercgor/gitfile/ARAI/datasets/data'
+_C.path.data_root = '/gpfs/share/home/2000012508/ML2023/data'
 # checkpoints path
-_C.path.check_root = '/home/supercgor/gitfile/ARAI/model'
-# Save file dir
-_C.path.save_dir = ""
-# OVITO
-_C.path.ovito = ""
+_C.path.check_root = './model/pretrain'
 
 # -----------------------------------------------------------------------------
 # Default settings
 # -----------------------------------------------------------------------------
 _C.setting = CN()
 # Batch size for a single GPU, could be overwritten by command line argument
-_C.setting.batch_size = 2
+_C.setting.batch_size = 4
 # Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.
 _C.setting.pin_memory = True
 # Number of data loading threads
-_C.setting.num_workers = 0
+_C.setting.num_workers = 12
 # 0 for using one GPU or list for Parallel device idx, no cpu: []
-_C.setting.device = [0]
+_C.setting.device = (0, 1)
 # Training epochs
 _C.setting.epochs = 50
 # Enable local loss after epoch
 _C.setting.local_epoch = 999
 # learning rate
-_C.setting.learning_rate = 1e-4
+_C.setting.lr = 3.0e-4
 # Clip gradient norm
-_C.setting.clip_grad = 10.0
+_C.setting.clip_grad = 15.0
 # Max number of models to save
 _C.setting.max_save = 3
 # Show the progress
@@ -48,16 +42,17 @@ _C.setting.split = [0.0, 3.0]
 # -----------------------------------------------------------------------------
 _C.model = CN()
 # checkpoint name
-_C.model.checkpoint = "tune_3dunet"
+_C.model.checkpoint = "UNet_strong_baseline"
 # use net
-_C.model.net = "TransUNet3D"
+_C.model.fea = "/gpfs/share/home/2000012508/ML2023/ARAI/model/pretrain/unet_v0/unet_CP03_LOSS0.0627.pkl"
+_C.model.cyc    = "/gpfs/share/home/2000012508/ML2023/ARAI/model/pretrain/cyclenet_v1/G_S2T_CP15_LOSS0.2132.pkl"
 # the init channels number
 _C.model.channels = 32
 # the size of input and output. (Z, X, Y)
 _C.model.inp_size = (16, 128, 128)
 _C.model.out_size = (4, 32, 32)
 # Threshold
-_C.model.threshold = 0.0
+_C.model.threshold = 0.5
 # NMS
 _C.model.nms = True
 
@@ -65,19 +60,14 @@ _C.model.nms = True
 # Data settings
 # -----------------------------------------------------------------------------
 _C.data = CN()
-# use dataset
-_C.data.dataset = 'exp'
+# use dataset smallice or bulkice
+_C.data.dataset = 'bulkiceMix'
 # How many images will be used
 _C.data.img_use = 10
 # Element names
 _C.data.elem_name = ('O', 'H')
 # Real box size (Z, X, Y)
-_C.data.real_size = [3, 25, 25]
-# file list
-_C.data.train_filelist = 'train.filelist'
-_C.data.valid_filelist = 'valid.filelist'
-_C.data.test_filelist = 'test.filelist'
-_C.data.pred_filelist = 'pred.filelist'
+_C.data.real_size = (3, 25, 25)
 
 # -----------------------------------------------------------------------------
 # Criterion settings
@@ -87,11 +77,13 @@ _C.criterion = CN()
 # Factor to increase the loss of positive sample
 _C.criterion.pos_weight = (5.0, 5.0)
 # Weight of confidence
-_C.criterion.weight_confidence = 1.0
+_C.criterion.w_c = 1.0
 # Weight of offset in x-axis and y-axis
-_C.criterion.weight_offset_xy = 0.5
+_C.criterion.w_xy = 0.5
 # Weight of offset in z-axis
-_C.criterion.weight_offset_z = 0.5
+_C.criterion.w_z = 0.5
+# Weight of wassersteinLoss loss
+_C.criterion.w_w = 0.1
 # Reduction of offset
 _C.criterion.reduction = 'mean'
 # Decay para

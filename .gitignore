@@ -3,11 +3,6 @@ __pycache__/
 *.log
 *.out
 *.ipynb
-debug*
 
-datasets/data/*
-!datasets/data/DATASETNAME/
-
-model/*/
-runs/*/
+model/pretrain/*
 debug.py

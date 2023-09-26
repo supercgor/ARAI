@@ -1,102 +1,153 @@
-import os
 import time
+import os
+import tqdm
+from collections import OrderedDict
 import numpy as np
-from tqdm import tqdm
-import json
 
 import torch
 from torch import nn
-from torchvision.utils import make_grid
 from torch.utils.tensorboard import SummaryWriter
-from network import model
-from network.basic import basicParallel
+from torch.utils.data import DataLoader
+from model import build_basic_model
+from model.utils import load_model
 
-from utils.analyze_data import *
-from utils.criterion import Criterion
-from utils.tools import metStat, output_target_to_imgs, fill_dict
-from datasets.dataset import make_dataset
-from utils.loader import Loader
-from utils.logger import Logger
-from utils.loader import poscarLoader
+from datasets import AFMDataset
+from utils import *
+from utils.metrics import metStat, analyse_cls
+from utils.criterion import modelLoss
 
-class Test():
-    def __init__(self, cfg):
+if os.environ.get("USER") == "supercgor":
+    from config.config import get_config
+else:
+    from config.wm import get_config
+    
+import argparse
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+
+parser = argparse.ArgumentParser(description='Testing the model')
+parser.add_argument("-d", "--dataset", help="Specify the dataset to use", default="../data/bulkexp")
+parser.add_argument("-f", "--filelist", help="Specify the filelist to use", default="test.filelist")
+parser.add_argument("-l", "--label", help="Specify whether to use label", default=False)
+parser.add_argument("-n", "--npy", help="Specify whether to save npy", default=True)
+parser.add_argument("-c", "--checkpoint", help="Specify the checkpoint to use", default="model/pretrain/unet_v0/unet_CP17_LOSS0.0331.pkl")
+
+args = parser.parse_args()
+
+class Trainer():
+    def __init__(self):
+        cfg = get_config()
         self.cfg = cfg
-        self.cuda = cfg.setting.device != []
-        
-        self.load_dir, self.work_dir = Loader(cfg, make_dir=False)
+        self.label = str2bool(args.label)
+        self.npy = str2bool(args.npy)
 
-        self.logger = Logger(path=f"{self.work_dir}",log_name="test.log",elem=cfg.data.elem_name,split=cfg.setting.split)
-        
-        self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/Test")
-        
-        self.model = model[cfg.model.net](inp_size=cfg.model.inp_size, out_size=cfg.model.out_size, hidden_channels=cfg.model.channels, out_feature= False)
-        
-        log = f"Load model parameters from {self.load_dir}/{cfg.model.best}"
-        
-        self.logger.info(log)
+        self.data_path = args.dataset
+        self.model_name = args.checkpoint.split('/')[-2]
+        os.makedirs(f"{self.data_path}/result", exist_ok=True)
+        os.makedirs(f"{self.data_path}/npy", exist_ok=True)
+        os.makedirs(f"{self.data_path}/result/{self.model_name}", exist_ok=True)
+        os.makedirs(f"{self.data_path}/npy/{self.model_name}", exist_ok=True)
 
-        self.model = self.model.eval()
+        self.work_dir = "/".join(args.checkpoint.split("/")[:-1])
+        self.logger = Logger(path=f"{self.data_path}/result/{self.model_name}",elem=cfg.data.elem_name,split=cfg.setting.split)
 
-        if self.cuda():
-            self.model.cuda()
-            self.analyzer = Analyzer(cfg).cuda()
-            self.ana2 = Analyzer2().cuda
-        
-        else:
-            self.analyzer = Analyzer(cfg)
-            self.ana2 = Analyzer2()
-        
-        self.pd_loader = make_dataset('test', cfg)
-        
-        self.pl = poscarLoader(path = f"{cfg.path.data_root}/{cfg.data.dataset}", model_name=cfg.model.checkpoint)
-            
+        self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/test")
+
+        self.net = build_basic_model(cfg).cuda().eval()
+
+        load_model(self.net, args.checkpoint, True)
+
+        self.analyse = analyse_cls(real_size = cfg.data.real_size,
+                                   lattent_size=cfg.model.out_size,
+                                   split=cfg.setting.split,
+                                   threshold=cfg.model.threshold).cuda()
+        self.LOSS = modelLoss(pos_w=cfg.criterion.pos_weight).cuda()
+
+        pred_data = AFMDataset(self.data_path,
+                               self.cfg.data.elem_name,
+                               file_list = args.filelist,
+                               transform = None,
+                               img_use = None,
+                               random_layer=False,
+                               model_inp = self.cfg.model.inp_size,
+                               model_out = self.cfg.model.out_size,
+                               label = self.label)
+
+        self.pred_loader = DataLoader(pred_data,
+                                      batch_size=1,
+                                      num_workers=self.cfg.setting.num_workers,
+                                      pin_memory=self.cfg.setting.pin_memory,
+                                      shuffle=False)
+
     @torch.no_grad()
-    def test(self, npy = True):
-        len_loader = len(self.pd_loader)
-        it_loader = iter(self.pd_loader)
-        
-        log_dic = {'loss': metStat()}
-        self.logger.info(f'Start Testing.')
-        
+    def fit(self):
+        self.logger.info(f"Start Prediction")
+        self.logger.info(f"dataset: {args.dataset}, filelist: {args.filelist}, checkpoint: {args.checkpoint}")
         start_time = time.time()
-                
-        pbar = tqdm(total=len_loader, desc=f"{self.cfg.model.net} - Test", position=0, leave=True, unit='it')
-        
+
+        iter_times = len(self.pred_loader)
+        it_loader = iter(self.pred_loader)
+
+        pbar = tqdm.tqdm(
+            total=iter_times - 1, desc=f"{args.checkpoint} - Test", position=0, leave=True, unit='it')
+
+        loss = metStat()
         i = 0
-        while i < len_loader:
-            inputs, targets, filenames = next(it_loader)
-
-            if self.cuda:
-                inputs = inputs.cuda(non_blocking = True)
-                targets = targets.cuda(non_blocking = True)
-                
-            predictions = self.model(inputs)
-            info = self.analyzer(predictions, targets)
-            count_info = self.analyzer.count(info)
-            
-            for key in count_info:
-                if key in log_dic:
-                    log_dic[key].add(count_info[key])
+        loss_count = {}
+        file_count = {}
+        
+        while i < iter_times:
+            try:
+                if self.label:
+                    imgs, gt_box, filenames = next(it_loader)
                 else:
-                    log_dic[key] = count_info[key]
-            
-            
-            for filename, x in zip(filenames, predictions):
-                self.pl.save4npy(f"{filename}A.poscar", x, conf = self.cfg.model.threshold)
-                if npy:
-                    if not os.path.exists(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}/npy/{self.cfg.model.checkpoint}"):
-                        os.mkdir(f"{self.cfg.path.data_root}/{self.cfg.data.dataset}/npy/{self.cfg.model.checkpoint}")
-                    torch.save(x.cpu().numpy(), f"{self.cfg.path.data_root}/{self.cfg.data.dataset}/npy/{self.cfg.model.checkpoint}/{filename}.npy")
-                
+                    imgs, filenames = next(it_loader)
+            except StopIteration:
+                break
+            imgs = imgs.cuda()
 
+            pd_box = self.net(imgs)
+
+            if self.label:
+                gt_box = gt_box.cuda()
+                B  = gt_box.shape[0]
+                losses = [self.LOSS(pd_box[(b,),...], gt_box[(b,),...]) for b in range(B)]
+                matches = [self.analyse(pd_box[(b,),...], gt_box[(b,),...]) for b in range(B)]
+                loss.add(self.LOSS(pd_box, gt_box))
+
+            for i, (filename, x) in enumerate(zip(filenames, pd_box)):
+                points_dict = poscar.box2pos(x,
+                               real_size=self.cfg.data.real_size,
+                               threshold=self.cfg.model.threshold)
+                poscar.pos2poscar(f"{self.data_path}/result/{self.model_name}/{filename}.poscar", points_dict)
+                if self.npy:
+                    np.save(f"{self.data_path}/npy/{self.model_name}/{filename}.npy", x.cpu().numpy())
+                    
+                if self.label:
+                    loss_count[filename] = losses[i].item()
+                    file_count[filename] = matches[i].get_met
+
+            pbar.set_postfix(file=filenames[0])
             pbar.update(1)
-        # -------------------------------------------
+            i += 1
 
         pbar.update(1)
         pbar.close()
-        # analyzer.rdf.save()
-  
+
+        if self.label:
+            self.logger.epoch_info(
+                0, {"loss": loss, "MET": self.analyse.summary()})
+            np.savez(f"{self.data_path}/result/{self.model_name}/{args.filelist}_loss.npz", **loss_count)
+            np.savez(f"{self.data_path}/result/{self.model_name}/{args.filelist}_MET.npz", **file_count)
+
         self.logger.info(f"Spend time: {time.time() - start_time:.2f}s")
-        
         self.logger.info(f'End prediction')
+        
+if __name__ == "__main__":
+    Trainer().fit()
