@@ -34,7 +34,7 @@ def main(cfg: DictConfig) -> None:
             ConfusionMatrixCounter(confusion_matrix)
             Optimizer.step()
             if local_rank == 0 and i % 1 == 0:
-                log.info(f"Epoch {epoch} | Iter {i} | Loss {loss:.2e} | Grad {grad:.2e}")
+                log.info(f"Epoch {epoch} | Iter {i}/{len(TrainLoader)} | Loss {loss:.2e} | Grad {grad:.2e}")
         Schedular.step()
         return LostStat.calc(), GradStat.calc(), ConfusionMatrixCounter.calc()
             
@@ -52,6 +52,9 @@ def main(cfg: DictConfig) -> None:
             confusion_matrix = Analyser(pred_type, pred_pos, targ_type, targ_pos)
             LostStat.add(loss)
             ConfusionMatrixCounter(confusion_matrix)
+            if local_rank == 0 and i % 1 == 0:
+                log.info(f"Epoch {epoch} | Iter {i}/{len(TestLoader)} | Loss {loss:.2e}")
+                
         return LostStat.calc(), ConfusionMatrixCounter.calc()
     
     work_dir = hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir']
