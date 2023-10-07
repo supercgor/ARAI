@@ -9,7 +9,7 @@ from torchvision.transforms import Compose
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from model import build_basic_model, build_cyc_model
-from model.utils import save_model, load_model
+from model.utils import model_save, model_load
 
 from datasets import AFMDataset, afterTransform
 from datasets import (PixelShift, Blur, ColorJitter, CutOut, Noisy, domainTransfer)
@@ -45,7 +45,7 @@ class Trainer():
         
         self.logger.info(f"network parameters: {sum([p.numel() for p in self.net.parameters()])}")
         
-        load_model(self.net, cfg.model.fea, True)
+        model_load(self.net, cfg.model.fea, True)
         
         self.logger.info(f"Load parameters from {cfg.model.fea}")
         
@@ -53,7 +53,7 @@ class Trainer():
         
         self.logger.info(f"Cycle network parameters: {sum([p.numel() for p in self.cyc.parameters()])}")
         
-        load_model(self.cyc, cfg.model.cyc, True)
+        model_load(self.cyc, cfg.model.cyc, True)
         
         self.logger.info(f"Load parameters from {cfg.model.cyc}")
         
@@ -293,7 +293,7 @@ class Trainer():
 
             log = []
             name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
-            save_model(self.net, f"{self.work_dir}/unet_{name}")
+            model_save(self.net, f"{self.work_dir}/unet_{name}")
             log.append(f"Saved a new net: {name}")
 
             for i in log:

@@ -9,7 +9,7 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from model import build_basic_model
-from model.utils import load_model
+from model.utils import model_load
 
 from datasets import AFMDataset
 from utils import *
@@ -61,7 +61,7 @@ class Trainer():
 
         self.net = build_basic_model(cfg).cuda().eval()
 
-        load_model(self.net, args.checkpoint, True)
+        model_load(self.net, args.checkpoint, True)
 
         self.analyse = analyse_cls(real_size = cfg.data.real_size,
                                    lattent_size=cfg.model.out_size,

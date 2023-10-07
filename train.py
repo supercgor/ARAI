@@ -9,7 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
 from model import build_basic_model
-from model.utils import save_model, load_model
+from model.utils import model_save, model_load
 from datasets import AFMDataset
 from utils import *
 from utils.metrics import metStat, analyse_cls
@@ -45,7 +45,7 @@ class Trainer():
         log = []
         
         try:
-            log.extend(load_model(self.net, f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}"))
+            log.extend(model_load(self.net, f"{cfg.path.check_root}/{cfg.model.checkpoint}/{cfg.model.fea}"))
             log.append(f"Load parameters from {cfg.model.checkpoint}/{cfg.model.fea}")
         except (FileNotFoundError, IsADirectoryError):
             log.append("No network is loaded, start a new model")
@@ -265,7 +265,7 @@ class Trainer():
 
             log = []
             name = f"CP{epoch:02d}_LOSS{log_dic['Loss']:.4f}.pkl"
-            save_model(self.net, f"{self.work_dir}/unet_{name}")
+            model_save(self.net, f"{self.work_dir}/unet_{name}")
             log.append(f"Saved a new net: {name}")
 
             for i in log:

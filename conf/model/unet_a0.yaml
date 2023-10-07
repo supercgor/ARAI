@@ -1,0 +1,17 @@
+net: unet_onehot
+max_save: 3
+checkpoint: ~
+params:
+  image_size: ${data.image_size}
+  in_channels: 1
+  model_channels: 32
+  latent_channels: 128
+  out_channels: 6
+  num_res_blocks: 1
+  attention_resolutions: []
+  dropout: 0.0
+  channel_mult: [1, 2, 3, 4, 8]
+  out_mult: 2
+  z_down: [1, 2, 4]
+  conv_resample: True
+  use_vaeblock: False

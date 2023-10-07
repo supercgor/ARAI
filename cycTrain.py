@@ -8,7 +8,7 @@ from torchvision.transforms import Compose
 from torchvision.utils import make_grid
 
 from model import build_cyc_model
-from model.utils import save_model, load_model
+from model.utils import model_save, model_load
 from datasets import AFMDataset
 
 from utils import *
@@ -282,7 +282,7 @@ class Trainer():
             log = []
             subname = f"CP{epoch:02d}_LOSS{met:.4f}.pkl"
             for name, model in self.models.items():
-                save_model(model, f"{self.work_dir}/{name}_{subname}")
+                model_save(model, f"{self.work_dir}/{name}_{subname}")
             log.append(f"Saved a new net: {subname}")
 
         else:

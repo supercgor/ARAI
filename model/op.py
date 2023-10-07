@@ -226,26 +226,33 @@ class Upsample(nn.Module):
                  upsampling occurs in the inner-two dimensions.
     """
 
-    def __init__(self, channels, use_conv, dims=2, out_channels=None, z_down = False):
+    def __init__(self, channels, use_conv, dims=2, out_channels=None, z_down = False, out_size = None):
         super().__init__()
         self.channels = channels
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
         self.dims = dims
         self.z_down = z_down
+        self.out_size = out_size
         
         if use_conv:
             self.conv = conv_nd(dims, self.channels, self.out_channels, 3, padding=1)
 
     def forward(self, x):
-        assert x.shape[1] == self.channels, f"input channel({x.shape[1]}) must be equal to self.channels({self.channels})"
+        assert x.shape[1] == self.channels, f"input channel({x.shape[1]}) must be equal to {self.channels}"
         if self.dims == 3:
-            if self.z_down:
-                x = F.interpolate(x, scale_factor= 2, mode="nearest")
-            else: 
-                x = F.interpolate(x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest")
+            if self.out_size is None:
+                if self.z_down:
+                    x = F.interpolate(x, scale_factor= 2, mode="nearest")
+                else: 
+                    x = F.interpolate(x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest")
+            else:
+                x = F.interpolate(x, self.out_size, mode="nearest")
         else:
-            x = F.interpolate(x, scale_factor=2, mode="nearest")
+            if self.out_size is None:
+                x = F.interpolate(x, scale_factor=2, mode="nearest")
+            else:
+                x = F.interpolate(x, self.out_size, mode="nearest")
             
         if self.use_conv:
             x = self.conv(x)
