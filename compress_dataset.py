@@ -6,6 +6,7 @@ import os
 import tqdm
 import torch
 from utils import poscar
+import matplotlib.pyplot as plt
 
 def parse_command_line_args():
     parser = argparse.ArgumentParser(description='This code is to compact the raw dataset into one file, the format is hdf5, which allows us to parallel read the folder faster.')
@@ -32,13 +33,13 @@ class DataReader(torch.utils.data.Dataset):
     def __getitem__(self, index):
         name = self._afm[index]
         imgs_index = os.listdir(f"{self._input_dir}/afm/{name}")
-        imgs_index = [i[:-4] for i in imgs_index if i.endswith('.png')]
+        imgs_index = [i[:-4] for i in imgs_index if i.endswith('.png') and not i.startswith('.')]
         imgs_index.sort(key=lambda x: int(x))
         imgs = []
         for img_index in imgs_index:
             img = cv2.imread(f"{self._input_dir}/afm/{name}/{img_index}.png", cv2.IMREAD_GRAYSCALE)
-            imgs.append(img)
-        imgs = np.array(imgs)
+            imgs.append(img.T[:,::-1])
+        imgs = np.stack(imgs, axis = 0)
         imgs = imgs[None, ...]
         imgs = imgs / 256
         if self._label:
@@ -57,7 +58,7 @@ if __name__ == '__main__':
         output_path += '.hdf5'
 
     afm_dirnames = os.listdir(f"{input_dir}/afm") # *
-    afm_dirnames = [i for i in afm_dirnames if not i.startswith('.')]
+    afm_dirnames = [i for i in afm_dirnames if not i.startswith('.') and i[:2] != '._' and 'txt' not in i]
     afm_dirnames.sort()
     if args.label:
         label_filenames = os.listdir(f"{input_dir}/label") # *.poscar
@@ -93,6 +94,17 @@ if __name__ == '__main__':
         train_names.sort()
         test_names = afm_dirnames[train_num:]
         test_names.sort()
+        if os.path.exists(f"{output_path[:-5]}_train.hdf5") or os.path.exists(f"{output_path[:-5]}_test.hdf5"):
+            print(f"Warning: Train/Test already exists, confirm to overwrite? (y/n)")
+            inp = input().lower().strip()
+            if inp not in ['y', 'yes', 'ok', "true", "1", "t"]:
+                exit(0)
+            else:
+                if os.path.exists(f"{output_path[:-5]}_train.hdf5"):
+                    os.remove(f"{output_path[:-5]}_train.hdf5")
+                if os.path.exists(f"{output_path[:-5]}_test.hdf5"):
+                    os.remove(f"{output_path[:-5]}_test.hdf5")
+            
         with h5py.File(f"{output_path[:-5]}_train.hdf5", 'w') as h5file:
             dataReader = DataReader(input_dir, train_names, args.label)
             dataLoader = torch.utils.data.DataLoader(dataReader, batch_size=3, shuffle=False, num_workers=args.workers, collate_fn=collate_fn)
