@@ -1,3 +1,5 @@
+# torchrun --standalone --nnodes=1 --nproc-per-node=1 trainv2.py
+
 import os
 import hydra
 import time
@@ -23,23 +25,28 @@ def ddp_setup(rank, world_size):
     
 class Trainer():
     def __init__(self, 
+                 work_dir: str,
                  cfg: DictConfig,
                  model: torch.nn.Module,
-                 TrainLoader: torch.optim.Optimizer,
-                 TestLoader: torch.optim.Optimizer,
+                 TrainLoader,
+                 TestLoader,
+                 Optimizer: torch.optim.Optimizer,
+                 Schedular: torch.optim.lr_scheduler,
                  log,
                  tblog,
-                 rank: int,
                  gpu_id: int,
                 ) -> None:
         self.cfg = cfg
-        self.rank = rank
+        self.rank = get_rank()
         self.gpu_id = gpu_id
         self.model = model.to(gpu_id)
         self.model = DDP(self.model, device_ids=[self.gpu_id])
         self.save_paths = []
         self.TrainLoader = TrainLoader
         self.TestLoader = TestLoader
+        self.Optimizer = Optimizer
+        self.Schedular = Schedular
+        self.GradScaler = torch.cuda.amp.GradScaler()
         self.log = log
         self.tblog = tblog
         #Analyser = torch.jit.script(utils.Analyser(cfg.data.real_size, cfg.data.nms, split = OmegaConf.to_object(cfg.data.split))).to(device)
@@ -56,17 +63,17 @@ class Trainer():
         
         self.best = np.inf
         
-    def fit(self, epochs: int):
+    def fit(self):
         for epoch in range(self.cfg.setting.epoch):
             self.log.info(f"Start training epoch: {epoch}...")
             epoch_start_time = time.time()
-            train_loss, train_grad, train_confusion = self.train_one_epoch()
+            train_loss, train_grad, train_confusion = self.train_one_epoch(epoch)
             logstr = f"""
             ============= Summary Train | Epoch {epoch:2d} ================
             loss: {train_loss:.2e} | grad: {train_grad:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins
             """
             
-            for i, e in enumerate(utils.ion_order.split()):
+            for i, e in enumerate(utils.const.ion_order.split()):
                 if e in self.cfg.data.ion_order:
                     logstr += f"""
             =================   Element - '{e}'    =================
@@ -77,17 +84,17 @@ class Trainer():
             ({low:.1f}-{high:.1f}A) AP: {train_confusion[i,j,4]:.2f} | AR: {train_confusion[i,j,3]:.2f} | ACC: {train_confusion[i,j,5]:.2f} | SUC: {train_confusion[i,j,6]:.2f}
             TP: {train_confusion[i,j,0]:10d} | FP: {train_confusion[i,j,1]:10d} | FN: {train_confusion[i,j,2]:10d}
             """
-            log.info(logstr)
+            self.log.info(logstr)
             
-            test_loss, test_confusion = self.test_one_epoch()
+            test_loss, test_confusion = self.test_one_epoch(epoch)
             
             logstr = f"""
             ============= Summary Test | Epoch {epoch:2d} ================
-            loss: {test_loss:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins | {'Model saved' if (test_loss < best) and (local_rank == 0) else 'Model not saved'}
+            loss: {test_loss:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins | {'Model saved' if (test_loss < self.best) and (self.rank == 0) else 'Model not saved'}
             """
             
-            for i, e in enumerate(utils.ion_order.split()):
-                if e in cfg.data.ion_order:
+            for i, e in enumerate(utils.const.ion_order.split()):
+                if e in self.cfg.data.ion_order:
                     logstr += f"""
             =================   Element - '{e}'    =================
             (Overall)  AP: {test_confusion[i,:,4].mean():.2f} | AR: {test_confusion[i,:,3].mean():.2f} | ACC: {test_confusion[i,:,5].mean():.2f} | SUC: {test_confusion[i,:,6].mean():.2f}
@@ -108,20 +115,33 @@ class Trainer():
             afm = afm.to(self.gpu_id, non_blocking = True)
             targ_type = targ_type.to(self.gpu_id, non_blocking = True)
             targ_pos = targ_pos.to(self.gpu_id, non_blocking = True)
-            pred_type, pred_pos, mu, var = self.model(afm)
-            loss = self.Criterion(pred_type, pred_pos, targ_type, targ_pos)
+            with torch.autocast():
+                pred_type, pred_pos, mu, var = self.model(afm)
+                loss = self.Criterion(pred_type, pred_pos, targ_type, targ_pos)
             self.Optimizer.zero_grad()
-            loss.backward()
-            grad = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.model.criterion.clip_grad, error_if_nonfinite=True)
+            self.GradScaler.scale(loss).backward()
+            self.GradScaler.unscale_(self.Optimizer)
+            grad = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.criterion.clip_grad, error_if_nonfinite=True)
             self.LostStat.add(loss)
             self.GradStat.add(grad)
             confusion_matrix = self.Analyser(pred_type, pred_pos, targ_type, targ_pos)
+            
             self.ConfusionMatrixCounter(confusion_matrix)
-            self.Optimizer.step()
+            self.GradScaler.step(self.Optimizer)
+            self.GradScaler.update()
             if self.rank == 0 and i % log_every == 0:
-                self.log.info(f"Epoch {epoch} | Iter {i}/{len(self.TrainLoader)} | Loss {loss:.2e} | Grad {grad:.2e}")
+                self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TrainLoader):5d} | Loss {loss:.2e} | Grad {grad:.2e}")
                 self.tblog.add_scalar("Train/Loss", loss, epoch * len(self.TrainLoader) + i)
                 self.tblog.add_scalar("Train/Grad", grad, epoch * len(self.TrainLoader) + i)
+                self.tblog.add_scalar("Train/LR", self.Schedular.get_last_lr()[0], epoch * len(self.TrainLoader) + i)
+                for e, (low, high) in enumerate(zip(self.cfg.data.split[:-1], self.cfg.data.split[1:])):
+                    elem = utils.const.ion_order.split()[e]
+                    self.tblog.add_scalar(f"Train/AP({elem}) {low:.1f}-{high:.1f}A", self.ConfusionMatrixCounter.AP[e])
+                    self.tblog.add_scalar(f"Train/AR({elem}) {low:.1f}-{high:.1f}A", self.ConfusionMatrixCounter.AR[e])
+                    self.tblog.add_scalar(f"Train/ACC({elem}) {low:.1f}-{high:.1f}A", self.ConfusionMatrixCounter.ACC[e])
+                    self.tblog.add_scalar(f"Train/SUC({elem}) {low:.1f}-{high:.1f}A", self.ConfusionMatrixCounter.SUC[e])
+                break
+                
         self.Schedular.step()
         return self.LostStat.calc(), self.GradStat.calc(), self.ConfusionMatrixCounter.calc()
     
@@ -141,7 +161,7 @@ class Trainer():
             self.LostStat.add(loss)
             self.ConfusionMatrixCounter(confusion_matrix)
             if self.rank == 0 and i % log_every == 0:
-                self.log.info(f"Epoch {epoch} | Iter {i}/{len(self.TestLoader)} | Loss {loss:.2e}")
+                self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TestLoader):5d} | Loss {loss:.2e}")
                 self.tblog.add_scalar("Test/Loss", loss, epoch * len(self.TestLoader) + i)
                 
         return self.LostStat.calc(), self.ConfusionMatrixCounter.calc()
@@ -157,10 +177,10 @@ class Trainer():
                 utils.model_save(self.model, path)
                 self.save_paths.append(path)
                 
-def load_train_objs(cfg: DictConfig):
+def load_train_objs(rank, cfg: DictConfig):
     work_dir = hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir']
     
-    log = utils.get_logger(f"[{get_rank()}]Train")
+    log = utils.get_logger(f"Rank {rank}")
     tblog = SummaryWriter(work_dir)
     
     net = getattr(model, cfg.model.net)(**cfg.model.params)
@@ -215,15 +235,27 @@ def prepare_dataloader(train_data, test_data, cfg: DictConfig):
 
 
 @hydra.main(config_path="conf", config_name="config", version_base=None) # hydra will automatically relocate the working dir.
-def main(rank, world_size, cfg: DictConfig) -> None:
+def main(cfg):
+    rank = int(os.environ["LOCAL_RANK"])
+    world_size = torch.cuda.device_count()
     ddp_setup(rank, world_size)
-    model, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog = load_train_objs(cfg)
+    model, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog = load_train_objs(rank, cfg)
+    print("OK")
     TrainLoader, TestLoader = prepare_dataloader(TrainDataset, TestDataset, cfg)
-    trainer = Trainer(cfg, model, TrainLoader, TestLoader, log, tblog, rank, gpu_id=rank)
+    trainer = Trainer(hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir'],
+                      cfg,
+                      model,
+                      TrainLoader,
+                      TestLoader,
+                      Optimizer,
+                      Schedular,
+                      log,
+                      tblog,
+                      rank,
+                      )
     trainer.fit()
     destroy_process_group()
-    
-            
+
 if __name__ == "__main__":
-    world_size = torch.cuda.device_count()
-    mp.spawn(main, args=(world_size, ), nprocs=world_size)
+    main()
+    

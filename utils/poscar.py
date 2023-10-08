@@ -68,7 +68,7 @@ def rearrange(ion: list[str], ion_num: list[int], pos: np.ndarray[np.float_], io
     """
     pos = np.split(pos, np.cumsum(ion_num)[:-1])
     if ion_order is ...:
-        ion_order = const.ion_order
+        ion_order = const.const.ion_order
     ordions = ion_order.split()
     for i in ordions:
         if i in ion:

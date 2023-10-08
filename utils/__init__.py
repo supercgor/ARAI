@@ -6,7 +6,7 @@ import random
 import numpy as np
 from .metrics import Analyser, ConfusionMatrixCounter, metStat
 from .criterion import BoxClsLoss
-from .const import ion_order
+from . import const
     
 def set_seed(seed):
     torch.manual_seed(seed)

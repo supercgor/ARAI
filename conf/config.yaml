@@ -2,5 +2,5 @@ defaults:
   - _self_
   - model: unet_a0
   - setting: default
-  - data: default
+  - data: wm
   - criterion: default

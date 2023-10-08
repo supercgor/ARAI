@@ -165,7 +165,34 @@ class ConfusionMatrixCounter(object):
     @numba.jit(nopython=True)
     def _count(cm: np.ndarray) -> tuple[np.ndarray]:
         return cm[..., 0], cm[..., 1], cm[..., 2], cm[..., 0] / (cm[..., 0] + cm[..., 2]), cm[..., 0] / (cm[..., 0] + cm[..., 1]), cm[..., 0] / np.sum(cm, axis=-1), ((cm[..., 1] == 0) & (cm[...,2] == 0)).astype(np.int32)
-        
+    
+    @property
+    def TP(self):
+        return self._TP[-1]
+    
+    @property
+    def FP(self):
+        return self._FP[-1]
+    
+    @property
+    def FN(self):
+        return self._FN[-1]
+    
+    @property
+    def AR(self):
+        return self._AR[-1]
+    
+    @property
+    def AP(self):
+        return self._AP[-1]
+    
+    @property
+    def ACC(self):
+        return self._ACC[-1]
+    
+    @property
+    def SUC(self):
+        return self._SUC[-1]
 
 class metStat():
     def __init__(self, value = None, reduction:str = "mean"):

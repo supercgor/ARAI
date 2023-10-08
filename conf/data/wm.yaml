@@ -1,5 +1,5 @@
-train_path: ~/Documents/data/bulkice_train.hdf5
-test_path: ~/Documents/data/bulkice_test.hdf5
+train_path: /gpfs/share/home/2000012508/Documents/data/bulkice_train.hdf5
+test_path: /gpfs/share/home/2000012508/Documents/data/bulkice_test.hdf5
 
 image_size: [10, 100, 100]
 real_size: [3.0, 25.0, 25.0]
