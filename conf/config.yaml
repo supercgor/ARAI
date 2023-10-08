@@ -4,5 +4,3 @@ defaults:
   - setting: default
   - data: default
   - criterion: default
-local_rank: 1
-world_size: 1

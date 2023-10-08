@@ -1,6 +1,5 @@
 epoch: 50
 batch_size: 4
-num_workers: 4
+num_workers: 6
 pin_memory: True
-device: []
   
