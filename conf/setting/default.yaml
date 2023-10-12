@@ -1,5 +1,5 @@
-epoch: 50
-batch_size: 4
+epoch: 10
+batch_size: 12
 num_workers: 6
 pin_memory: True
   

@@ -1,153 +1,164 @@
-import time
+# torchrun --standalone --nnodes=1 --nproc-per-node=2 test.py
+
 import os
-import tqdm
-from collections import OrderedDict
+import hydra
+import time
+
 import numpy as np
-
 import torch
-from torch import nn
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader
-from model import build_basic_model
-from model.utils import model_load
+from omegaconf import OmegaConf, DictConfig
 
-from datasets import AFMDataset
-from utils import *
-from utils.metrics import metStat, analyse_cls
-from utils.criterion import modelLoss
-
-if os.environ.get("USER") == "supercgor":
-    from config.config import get_config
-else:
-    from config.wm import get_config
+import dataset
+import model
+import utils
+from utils import poscar
     
-import argparse
-
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-
-parser = argparse.ArgumentParser(description='Testing the model')
-parser.add_argument("-d", "--dataset", help="Specify the dataset to use", default="../data/bulkexp")
-parser.add_argument("-f", "--filelist", help="Specify the filelist to use", default="test.filelist")
-parser.add_argument("-l", "--label", help="Specify whether to use label", default=False)
-parser.add_argument("-n", "--npy", help="Specify whether to save npy", default=True)
-parser.add_argument("-c", "--checkpoint", help="Specify the checkpoint to use", default="model/pretrain/unet_v0/unet_CP17_LOSS0.0331.pkl")
-
-args = parser.parse_args()
-
 class Trainer():
-    def __init__(self):
-        cfg = get_config()
+    def __init__(self, 
+                 work_dir: str,
+                 cfg: DictConfig,
+                 model: torch.nn.Module,
+                 TestLoader,
+                 log,
+                 tblog,
+                 gpu_id: int,
+                ) -> None:
+        self.work_dir = work_dir
         self.cfg = cfg
-        self.label = str2bool(args.label)
-        self.npy = str2bool(args.npy)
-
-        self.data_path = args.dataset
-        self.model_name = args.checkpoint.split('/')[-2]
-        os.makedirs(f"{self.data_path}/result", exist_ok=True)
-        os.makedirs(f"{self.data_path}/npy", exist_ok=True)
-        os.makedirs(f"{self.data_path}/result/{self.model_name}", exist_ok=True)
-        os.makedirs(f"{self.data_path}/npy/{self.model_name}", exist_ok=True)
-
-        self.work_dir = "/".join(args.checkpoint.split("/")[:-1])
-        self.logger = Logger(path=f"{self.data_path}/result/{self.model_name}",elem=cfg.data.elem_name,split=cfg.setting.split)
-
-        self.tb_writer = SummaryWriter(log_dir=f"{self.work_dir}/runs/test")
-
-        self.net = build_basic_model(cfg).cuda().eval()
-
-        model_load(self.net, args.checkpoint, True)
-
-        self.analyse = analyse_cls(real_size = cfg.data.real_size,
-                                   lattent_size=cfg.model.out_size,
-                                   split=cfg.setting.split,
-                                   threshold=cfg.model.threshold).cuda()
-        self.LOSS = modelLoss(pos_w=cfg.criterion.pos_weight).cuda()
-
-        pred_data = AFMDataset(self.data_path,
-                               self.cfg.data.elem_name,
-                               file_list = args.filelist,
-                               transform = None,
-                               img_use = None,
-                               random_layer=False,
-                               model_inp = self.cfg.model.inp_size,
-                               model_out = self.cfg.model.out_size,
-                               label = self.label)
-
-        self.pred_loader = DataLoader(pred_data,
-                                      batch_size=1,
-                                      num_workers=self.cfg.setting.num_workers,
-                                      pin_memory=self.cfg.setting.pin_memory,
-                                      shuffle=False)
+        self.gpu_id = gpu_id
+        self.model = model.to(gpu_id)
+        self.save_paths = []
+        self.TestLoader = TestLoader
+        self.log = log
+        self.tblog = tblog
+        #Analyser = torch.jit.script(utils.Analyser(cfg.data.real_size, cfg.data.nms, split = OmegaConf.to_object(cfg.data.split))).to(device)
+        self.Analyser = utils.Analyser(cfg.data.real_size, cfg.data.nms, split = OmegaConf.to_object(cfg.data.split)).to(self.gpu_id)
+        self.ConfusionMatrixCounter = utils.ConfusionMatrixCounter()
+        self.LostStat = utils.metStat()
+        
+        self.Criterion = utils.BoxClsLoss(wxy = cfg.criterion.xy_weight, 
+                                     wz = cfg.criterion.z_weight, 
+                                     wcls = cfg.criterion.cond_weight, 
+                                     ion_weight=cfg.criterion.pos_weight
+                                     ).to(self.gpu_id)
+        
+        self.best = np.inf
+        
+    def fit(self):
+        self.log.info(f"Start testing {self.cfg.test_path}...")
+        epoch_start_time = time.time()
+        if self.cfg.label:
+            test_loss, test_confusion = self.test_one_epoch(0)
+            logstr = f"\n============= Summary Test | Epoch 0 ================\nloss: {test_loss:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins | {'Model saved' if (test_loss < self.best) and (self.rank == 0) else 'Model not saved'}"
+            for i, e in enumerate(utils.const.ion_order.split()):
+                if e in self.cfg.data.ion_type:
+                    logstr += f"\n=================   Element - '{e}'    =================\n(Overall)  AP: {test_confusion[i,:,4].mean():.2f} | AR: {test_confusion[i,:,3].mean():.2f} | ACC: {test_confusion[i,:,5].mean():.2f} | SUC: {test_confusion[i,:,6].mean():.2f}"
+                    for j, (low, high) in enumerate(zip(self.cfg.data.split[:-1], self.cfg.data.split[1:])):
+                        logstr += f"\n({low:.1f}-{high:.1f}A) AP: {test_confusion[i,j,4]:.2f} | AR: {test_confusion[i,j,3]:.2f} | ACC: {test_confusion[i,j,5]:.2f} | SUC: {test_confusion[i,j,6]:.2f}\nTP: {test_confusion[i,j,0]:10.0f} | FP: {test_confusion[i,j,1]:10.0f} | FN: {test_confusion[i,j,2]:10.0f}"
+        else:
+            logstr = f"\n============= Summary Test | Epoch 0 ================\n used time: {(time.time() - epoch_start_time)/60:4.1f}"
+            self.valid_one_epoch(0)
+            
+        self.log.info(logstr)
+        
+      
+    @torch.no_grad()
+    def valid_one_epoch(self, epoch, log_every: int = 100, save_result_every: int | None = None) -> tuple[torch.Tensor]:
+        self.model.eval()
+        for i, (filenames, afm) in enumerate(self.TestLoader):
+            afm = afm.to(self.gpu_id, non_blocking = True)
+            pred_type, pred_pos, mu, var = self.model(afm)
+            pred_pos, pred_ion_num = self.Analyser.process_pred(pred_type, pred_pos)
+            if save_result_every is not None and i % save_result_every == 0:
+                for filename, predpos, pred_ionnum in zip(filenames, pred_pos, pred_ion_num):
+                    poscar.save(f"{self.work_dir}/{filename}.poscar", self.cfg.data.real_size, self.cfg.data.ion_type, pred_ionnum, predpos)
+            if i % log_every == 0:
+                self.log.info(f"Iter {i:5d}/{len(self.TestLoader):5d}")
+        return
 
     @torch.no_grad()
-    def fit(self):
-        self.logger.info(f"Start Prediction")
-        self.logger.info(f"dataset: {args.dataset}, filelist: {args.filelist}, checkpoint: {args.checkpoint}")
-        start_time = time.time()
-
-        iter_times = len(self.pred_loader)
-        it_loader = iter(self.pred_loader)
-
-        pbar = tqdm.tqdm(
-            total=iter_times - 1, desc=f"{args.checkpoint} - Test", position=0, leave=True, unit='it')
-
-        loss = metStat()
-        i = 0
-        loss_count = {}
-        file_count = {}
+    def test_one_epoch(self, epoch, log_every: int = 100, save_result_every: int | None = None) -> tuple[torch.Tensor]:
+        self.model.eval()
+        self.LostStat.reset()
+        self.ConfusionMatrixCounter.reset()
+        for i, (filenames, afm, targ_type, targ_pos) in enumerate(self.TestLoader):
+            afm = afm.to(self.gpu_id, non_blocking = True)
+            targ_type = targ_type.to(self.gpu_id, non_blocking = True)
+            targ_pos = targ_pos.to(self.gpu_id, non_blocking = True)
+            with torch.autocast(device_type='cuda'):
+                pred_type, pred_pos, mu, var = self.model(afm)
+                loss = self.Criterion(pred_type, pred_pos, targ_type, targ_pos)
+            confusion_matrix = self.Analyser(pred_type, pred_pos, targ_type, targ_pos)
+            self.LostStat.add(loss)
+            self.ConfusionMatrixCounter(confusion_matrix)
+            pred_pos, pred_ion_num = self.Analyser.process_pred(pred_type, pred_pos)
+            if save_result_every is not None and i % save_result_every == 0:
+                for filename, predpos, pred_ionnum in zip(filenames, pred_pos, pred_ion_num):
+                    poscar.save(f"{self.work_dir}/{filename}.poscar", self.cfg.data.real_size, self.cfg.data.ion_type, pred_ionnum, predpos)
+            if i % log_every == 0:
+                self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TestLoader):5d} | Loss {loss:.2e}")
+                self.tblog.add_scalar("Test/Loss", loss, epoch * len(self.TestLoader) + i)
+                
+        return self.LostStat.calc(), self.ConfusionMatrixCounter.calc()
+                
+def load_objs(cfg: DictConfig):
+    work_dir = hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir']
+    
+    log = utils.get_logger(f"Rank 0")
+    tblog = SummaryWriter(f"{work_dir}/runs")
+    
+    net = getattr(model, cfg.model.net)(**cfg.model.params)
+    
+    log.info(f"Network parameters: {sum([p.numel() for p in net.parameters()])}")
+    
+    try:
+        missing = utils.model_load(net, cfg.checkpoint, True)
+        log.info(f"Load parameters from {cfg.checkpoint}")
+        if len(missing) > 0:
+            log.info(f"Missing keys: {missing}")
+    except:
+        raise FileNotFoundError(f"Checkpoint {cfg.checkpoint} not found")
+    
+    if cfg.transform is None:
+        transform = None
+    else:
+        transform = torch.nn.Sequential(dataset.Resize(tuple(cfg.data.image_size[1:])),
+                                        dataset.PixelShift(),
+                                        dataset.Cutout(),
+                                        dataset.ColorJitter(),
+                                        dataset.Noisy(),
+                                        dataset.Blur()
+                                        )
         
-        while i < iter_times:
-            try:
-                if self.label:
-                    imgs, gt_box, filenames = next(it_loader)
-                else:
-                    imgs, filenames = next(it_loader)
-            except StopIteration:
-                break
-            imgs = imgs.cuda()
-
-            pd_box = self.net(imgs)
-
-            if self.label:
-                gt_box = gt_box.cuda()
-                B  = gt_box.shape[0]
-                losses = [self.LOSS(pd_box[(b,),...], gt_box[(b,),...]) for b in range(B)]
-                matches = [self.analyse(pd_box[(b,),...], gt_box[(b,),...]) for b in range(B)]
-                loss.add(self.LOSS(pd_box, gt_box))
-
-            for i, (filename, x) in enumerate(zip(filenames, pd_box)):
-                points_dict = poscar.box2pos(x,
-                               real_size=self.cfg.data.real_size,
-                               threshold=self.cfg.model.threshold)
-                poscar.pos2poscar(f"{self.data_path}/result/{self.model_name}/{filename}.poscar", points_dict)
-                if self.npy:
-                    np.save(f"{self.data_path}/npy/{self.model_name}/{filename}.npy", x.cpu().numpy())
-                    
-                if self.label:
-                    loss_count[filename] = losses[i].item()
-                    file_count[filename] = matches[i].get_met
-
-            pbar.set_postfix(file=filenames[0])
-            pbar.update(1)
-            i += 1
-
-        pbar.update(1)
-        pbar.close()
-
-        if self.label:
-            self.logger.epoch_info(
-                0, {"loss": loss, "MET": self.analyse.summary()})
-            np.savez(f"{self.data_path}/result/{self.model_name}/{args.filelist}_loss.npz", **loss_count)
-            np.savez(f"{self.data_path}/result/{self.model_name}/{args.filelist}_MET.npz", **file_count)
-
-        self.logger.info(f"Spend time: {time.time() - start_time:.2f}s")
-        self.logger.info(f'End prediction')
+    TestDataset = dataset.AFMDataset(cfg.data.test_path, useLabel=True, useZ=cfg.data.image_size[0], transform=transform)
         
+    return net, TestDataset, log, tblog
+
+def prepare_dataloader(test_data, cfg: DictConfig):        
+    TestLoader = torch.utils.data.DataLoader(test_data,
+                                             batch_size=cfg.setting.batch_size,
+                                             shuffle=False,
+                                             num_workers=cfg.setting.num_workers,
+                                             pin_memory=cfg.setting.pin_memory,
+                                             )
+    
+    return TestLoader
+
+
+@hydra.main(config_path="conf", config_name="config", version_base=None) # hydra will automatically relocate the working dir.
+def main(cfg):
+    model, TestDataset, log, tblog = load_objs(cfg)
+    TestLoader = prepare_dataloader(TestDataset, cfg)
+    trainer = Trainer(hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir'],
+                      cfg,
+                      model,
+                      TestLoader,
+                      log,
+                      tblog,
+                      )
+    trainer.fit()
+
 if __name__ == "__main__":
-    Trainer().fit()
+    main()
+    

@@ -33,3 +33,28 @@ class BoxClsLoss(nn.Module):
         mask = targ_clses > 0.5
         pos_loss = self.mse(pred_boxes[mask], targ_boxes[mask]).mean(dim = 0)
         return cls_loss * self.wcls + pos_loss[0] * self.wz + pos_loss[1:].mean() * self.wxy
+    
+class conditionVAELoss(nn.Module):
+    def __init__(self, wc = 0.4, wpos_weight = 10.0, wpos = 0.3, wr = 0.3, wvae = 1.0):
+        super().__init__()
+        self.closs = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([wpos_weight]))
+        self.posloss = nn.MSELoss()
+        self.rloss = nn.L1Loss()
+        self.wc = wc
+        self.wpos = wpos
+        self.wr = wr
+        self.wvae = wvae
+    
+    def vaeloss(self, mu, logvar):
+        return -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum()
+    
+    def forward(self, pred, targ, mu, logvar):
+        pd_conf, pd_pos, pd_rt = torch.split(pred, [1, 3, 6], dim = -1)
+        tg_conf, tg_pos, tg_rt = torch.split(targ, [1, 3, 6], dim = -1)
+        loss_wc = self.wc * self.closs(pd_conf, tg_conf)
+        mask = tg_conf[...,0] > 0.5
+        loss_pos = self.wpos * self.posloss(pd_pos[mask], pd_pos[mask])
+        loss_r = self.wr * self.rloss(pd_rt[mask], tg_rt[mask])
+        loss_vae = self.wvae * self.vaeloss(mu, logvar)
+        return loss_wc, loss_pos, loss_r, loss_vae
+        

@@ -1,6 +1,12 @@
 defaults:
   - _self_
-  - model: unet_a0
+  - model: 4a8a
   - setting: default
-  - data: wm
-  - criterion: default
+  - data: 4a8a
+  - criterion: 4a8a
+
+test_path: ${data.test_path}
+checkpoint: ${model.checkpoint}
+label: False
+transform: False
+output: ~

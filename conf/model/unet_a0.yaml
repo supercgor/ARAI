@@ -9,8 +9,8 @@ params:
   out_channels: 6
   num_res_blocks: 1
   attention_resolutions: []
-  dropout: 0.0
-  channel_mult: [1, 2, 3, 4, 8]
+  dropout: 0.1
+  channel_mult: [1, 2, 4, 4, 8]
   out_mult: 2
   z_down: [1, 2, 4]
   conv_resample: True
