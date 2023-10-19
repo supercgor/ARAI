@@ -1,0 +1,17 @@
+net: VAELatEmb
+max_save: 10
+checkpoint: ~
+params:
+  in_size: ${data.image_size}
+  in_channels: 10
+  out_size: [8, 25, 25]
+  out_channels: 10
+  model_channels: 32
+  embedding_input: 1
+  latent_channels: 256
+  num_res_blocks: [2, 2]
+  dropout: 0.0
+  channel_mult: [1, 2, 4, 8]
+  z_down: [2, 8]
+  z_up: [2, 4, 8]
+  conv_resample: True

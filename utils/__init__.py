@@ -4,7 +4,7 @@ import torch
 
 import random
 import numpy as np
-from .metrics import Analyser, MolecularAnalyser, ConfusionMatrixCounter, metStat
+from .metrics import Analyser, parallelAnalyser, ConfusionMatrixCounter, metStat, ConfusionCounter, ConfusionRotate
 from .criterion import BoxClsLoss, conditionVAELoss
 from . import const, poscar, xyz, functional
     

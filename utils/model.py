@@ -47,7 +47,7 @@ def model_save(module: nn.Module, path: str):
 def model_load(module: nn.Module, path: str, strict = False) -> list[str]:
     state_dict = module.state_dict()
     param_names = list(state_dict.keys())
-    pretrained_state_dict = torch.load(path)
+    pretrained_state_dict = torch.load(path, map_location = 'cpu')
     pretrained_param_names = list(pretrained_state_dict.keys())
     match_list = []
     for i, param in enumerate(pretrained_param_names):

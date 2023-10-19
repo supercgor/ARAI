@@ -315,7 +315,7 @@ class MixBlock(ReferenceBlock):
         x = self.op(x)
         return x
         
-class ResBlock(TimestepBlock):
+class ZeroResBlock(TimestepBlock):
     """
     A residual block that can optionally change the number of channels.
 
@@ -371,7 +371,7 @@ class ResBlock(TimestepBlock):
         self.out_layers.add_module("norm", normalization(self.out_channels))
         self.out_layers.add_module("act", nn.SiLU())
         self.out_layers.add_module("drop", nn.Dropout(p=dropout))
-        self.out_layers.add_module("conv", zero_module((conv_nd(dims, self.out_channels, self.out_channels, 3, padding=1))))
+        self.out_layers.add_module("conv", conv_nd(dims, self.out_channels, self.out_channels, 3, padding=1))
 
         if self.out_channels == channels:
             self.skip_connection = nn.Identity()

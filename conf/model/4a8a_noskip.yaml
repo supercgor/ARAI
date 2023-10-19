@@ -14,5 +14,5 @@ params:
   dropout: 0.0
   channel_mult: [1, 2, 3, 4]
   z_down: [2, 8]
-  skip_mult: [4]
+  skip_mult: []
   conv_resample: True

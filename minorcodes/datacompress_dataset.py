@@ -59,7 +59,7 @@ class DataReader(torch.utils.data.Dataset):
 
 if __name__ == '__main__':
     input_dir: str = "/Volumes/HEIU/data/ice_8_4A"
-    output_path: str = f"{input_dir}/ice_8_4A.hdf5"
+    output_path: str = f"{input_dir}/ice_8_4A_small.hdf5"
     afm_dirnames = []
     for system in ["dposit", "hup"]:
         for temp in os.listdir(f"{input_dir}/{system}"):
@@ -78,8 +78,10 @@ if __name__ == '__main__':
     train_num = len(afm_dirnames) - test_num
     np.random.shuffle(afm_dirnames)
     train_names = afm_dirnames[:train_num]
+    train_names = train_names[:100]
     train_names.sort()
     test_names = afm_dirnames[train_num:]
+    test_names = test_names[:50]
     test_names.sort()
     if os.path.exists(f"{output_path[:-5]}_train.hdf5") or os.path.exists(f"{output_path[:-5]}_test.hdf5"):
         print(f"Warning: Train/Test already exists, confirm to overwrite? (y/n)")

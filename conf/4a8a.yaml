@@ -1,0 +1,14 @@
+defaults:
+  - _self_
+  - model: 4a8a2
+  - setting: test
+  - data: 4a8asmall
+  - criterion: 4a8a
+
+test_path: ${data.test_path}
+checkpoint: ${model.checkpoint}
+label: False
+save_pred: False
+pred_loop: 3
+transform: False
+output: ~

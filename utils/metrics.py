@@ -1,10 +1,14 @@
 import numpy as np
 import numba
+from functools import partial
+import time
 
 import torch
 from torch import nn, Tensor
+from torch import multiprocessing as mp
 
 from . import poscar
+from . import functional
 from typing import Iterable
 
 class Analyser(nn.Module):
@@ -145,197 +149,55 @@ class Analyser(nn.Module):
             OUTS[i,0], OUTS[i,1], OUTS[i,2] = TP, FP, FN
         return OUTS
 
-class ConfusionMatrixCounter(object):
-    def __init__(self, ):
-        self._TP = []
-        self._FP = []
-        self._FN = []
-        self._AR = []
-        self._AP = []
-        self._ACC = []
-        self._SUC = []
-    
-    def __call__(self, confusion_matrix: np.ndarray) -> None:
-        """
-        _summary_
-
-        Args:
-            confusion_matrix (Tensor): B C-1 S (TP, FP, FN)
-        """
-        if isinstance(confusion_matrix, Tensor):
-            confusion_matrix = confusion_matrix.detach().cpu().numpy()
-        TP, FP, FN, AR, AP, ACC, SUC = self._count(confusion_matrix)
-        self._TP.append(TP)
-        self._FP.append(FP)
-        self._FN.append(FN)
-        self._AR.append(AR)
-        self._AP.append(AP)
-        self._ACC.append(ACC)
-        self._SUC.append(SUC)
-
-    def reset(self):
-        self._TP = []
-        self._FP = []
-        self._FN = []
-        self._AR = []
-        self._AP = []
-        self._ACC = []
-        self._SUC = []
-    
-    def calc(self) -> tuple[np.ndarray]:
-        TP = np.concatenate(self._TP, axis = 0).sum(axis = 0)
-        FP = np.concatenate(self._FP, axis = 0).sum(axis = 0)
-        FN = np.concatenate(self._FN, axis = 0).sum(axis = 0)
-        AR = np.concatenate(self._AR, axis = 0).mean(axis = 0)
-        AP = np.concatenate(self._AP, axis = 0).mean(axis = 0)
-        ACC = np.concatenate(self._ACC, axis = 0).mean(axis = 0)
-        SUC = np.concatenate(self._SUC, axis = 0).mean(axis = 0)
-        return np.stack([TP, FP, FN, AR, AP, ACC, SUC], axis = -1)
-    
-    @staticmethod
-    @numba.jit(nopython=True)
-    def _count(cm: np.ndarray) -> tuple[np.ndarray]:
-        return cm[..., 0], cm[..., 1], cm[..., 2], np.nan_to_num(cm[..., 0] / (cm[..., 0] + cm[..., 2])), np.nan_to_num(cm[..., 0] / (cm[..., 0] + cm[..., 1])), np.nan_to_num(cm[..., 0] / np.sum(cm, axis=-1)), ((cm[..., 1] == 0) & (cm[...,2] == 0)).astype(np.int32)
-    
-    @property
-    def TP(self):
-        return self._TP[-1]
-    
-    @property
-    def FP(self):
-        return self._FP[-1]
-    
-    @property
-    def FN(self):
-        return self._FN[-1]
-    
-    @property
-    def AR(self):
-        return self._AR[-1]
-    
-    @property
-    def AP(self):
-        return self._AP[-1]
-    
-    @property
-    def ACC(self):
-        return self._ACC[-1]
-    
-    @property
-    def SUC(self):
-        return self._SUC[-1]
-
-class MolecularAnalyser(nn.Module):
-    def __init__(self, real_size: tuple[float] = (25.0, 25.0, 4.0), nms: bool = True, sort: bool = True, threshold: float = 0.5, cutoff: float = 2.0):
-        # real_size: x, y, z
+class parallelAnalyser(nn.Module):
+    def __init__(self, real_size: tuple[float] = (25.0, 25.0, 4.0), nms: bool = True, sort: bool = True, threshold: float = 0.5, cutoff: float = 2.0, split: list[float] = [0.0, 4.0, 8.0]):
         super().__init__()
-        self.register_buffer("_real_size", torch.as_tensor(real_size))
+        self.register_buffer("_real_size", torch.as_tensor(real_size, dtype=torch.float))
         self._nms = nms
         self._sort = sort
         self._threshold = threshold
         self._cutoff = cutoff
-
-    def forward(self, pred: Tensor, targ: Tensor):
-        with torch.no_grad():
-            pd_confs, pd_poses, pd_rotxs, pd_rotys = pred[..., 0].sigmoid(), pred[..., 1:4], pred[..., 4:7], pred[..., 7:]
-            tg_confs, tg_poses, tg_rotxs, tg_rotys = targ[..., 0], targ[..., 1:4], targ[..., 4:7], targ[..., 7:]
-            pd_rotzs = torch.cross(pd_rotxs, pd_rotys, dim = -1)
-            tg_rotzs = torch.cross(tg_rotxs, tg_rotys, dim = -1)
-            pd_Rs = torch.stack([pd_rotxs, pd_rotys, pd_rotzs], dim = -2)
-            tg_Rs = torch.stack([tg_rotxs, tg_rotys, tg_rotzs], dim = -2)
-            confusion_matrix = torch.empty((pred.shape[0], 1, 1, 3), dtype = torch.long, device = pred.device) # B C-1 (TP, FP, FN)
-            MS = torch.zeros((pred.shape[0], 1, 1, 1), dtype = torch.float32, device = pred.device)
-            for b in range(pred.shape[0]):
-                pd_conf, pd_pos, pd_mask = self.tovec(pd_confs[b], pd_poses[b])
-                _, tg_pos, tg_mask = self.tovec(tg_confs[b], tg_poses[b])
-                pd_R = pd_Rs[b][pd_mask[0], pd_mask[1], pd_mask[2]]
-                tg_R = tg_Rs[b][tg_mask[0], tg_mask[1], tg_mask[2]]
-                if self._sort:
-                    pd_conf_order = pd_conf.argsort(descending = True)
-                    pd_pos = pd_pos[pd_conf_order]
-                    pd_R = pd_R[pd_conf_order]
-                if self._nms:
-                    pd_nms_mask = self.argnms(pd_pos, self._cutoff)
-                    pd_pos = pd_pos[pd_nms_mask]
-                    pd_R = pd_R[pd_nms_mask]
-                pd_pos = pd_pos * self._real_size
-                tg_pos = tg_pos * self._real_size
-                pd_match_ids, tg_match_ids = self.argmatch(pd_pos, tg_pos, self._cutoff)
-                pd_R = pd_R[pd_match_ids]
-                tg_R = tg_R[tg_match_ids]
-                confusion_matrix[b,...,0] = len(pd_match_ids)
-                confusion_matrix[b,...,1] = len(pd_pos) - len(pd_match_ids)
-                confusion_matrix[b,...,2] = len(tg_pos) - len(tg_match_ids)
-                if pd_R.shape[0] != 0:
-                    MS[b,...,0] = torch.mean(torch.clip((pd_R * tg_R).sum(-1, keepdim=True) / (torch.norm(pd_R, dim = -1) * torch.norm(tg_R, dim = -1)), -1, 1).arccos() / torch.pi * 180.0)
-            return confusion_matrix, MS
+        self._split = split
+        self._split[-1] += 1e-5
+    
+    @torch.no_grad()
+    def forward(self, preds: Tensor, targs: Tensor):
+        # B D H W C -> B H W D C
+        # preds = preds.permute(0, 2, 3, 1, 4)
+        # targs = targs.permute(0, 2, 3, 1, 4)
+        
+        f = partial(self.eval_one, threshold = self._threshold, cutoff = self._cutoff, real_size = self._real_size, sort = self._sort, nms = self._nms, split = self._split)
+        results = [f(pred, targ) for pred, targ in zip(preds.detach(), targs.detach())]
+        return torch.stack(results, dim = 0)
+             
+    @staticmethod
+    def eval_one(pred: Tensor, targ: Tensor, threshold: float, cutoff: float, real_size: Tensor, sort: bool, nms: bool, split: list[float]) -> tuple[Tensor]:
+        _, pd_pos, pd_R = functional.box2orgvec(pred, functional.inverse_sigmoid(threshold), cutoff, real_size, sort, nms)
+        _, tg_pos, tg_R = functional.box2orgvec(targ, 0.5, cutoff, real_size, False, False)
+        
+        cm = torch.zeros((1, len(split) - 1, 4), dtype = torch.float, device = pred.device) # C S (TP, FP, FN)
+            
+        pd_match_ids, tg_match_ids = functional.argmatch(pd_pos, tg_pos, cutoff/2)
+        
+        pd_R = pd_R[pd_match_ids] # N 3 3
+        tg_R = tg_R[tg_match_ids] # N 3 3
+        
+        match_tg_pos = tg_pos[tg_match_ids] # N 3
+        
+        ang = torch.einsum("bij,bij->bi", pd_R, tg_R) / pd_R.norm(dim=-1) / tg_R.norm(dim=-1)
+        ang.clamp_(-1, 1).acos_().div_(torch.pi/ 180.0).nan_to_num_(90.0)
+        
+        for i, (low, high) in enumerate(zip(split[:-1], split[1:])):
+            match_tg_mask = (match_tg_pos[:, 2] >= low) & (match_tg_pos[:, 2] < high) # TP
+            pd_mask = (pd_pos[:, 2] >= low) & (pd_pos[:, 2] < high) # P
+            tg_mask = (tg_pos[:, 2] >= low) & (tg_pos[:, 2] < high) # T
+            cm[0, i, 0] = match_tg_mask.sum() #TP
+            cm[0, i, 1] = pd_mask.sum() - match_tg_mask.sum() # FP
+            cm[0, i, 2] = tg_mask.sum() - match_tg_mask.sum() # FN
+            cm[0, i, 3] = ang.mean().nan_to_num(90.0)         # ANG
+            
+        return cm
                 
-    def tovec(self, box_cls: torch.Tensor, box_off: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        _summary_
-
-        Args:
-            box_cls (torch.tensor): Z X Y
-            box_off (torch.tensor): Z X Y 3
-
-        Returns:
-            tuple[torch.tensor]: (N, ), (N, 3), (3, Z * X * Y)
-        """
-        ZXY = box_cls.shape
-        mask = torch.nonzero(box_cls > self._threshold)
-        tupmask = mask.T
-        box_cls = box_cls[tupmask[0], tupmask[1], tupmask[2]]
-        box_off = (box_off[tupmask[0], tupmask[1], tupmask[2]] + mask) / torch.as_tensor(ZXY, dtype = box_off.dtype, device = box_off.device)
-        
-        return box_cls, box_off, tupmask
-                    
-    
-    @staticmethod
-    def argnms(pos: Tensor, cutoff: float) -> Tensor:
-        """
-        _summary_
-
-        Args:
-            pos (Tensor): N 3
-
-        Returns:
-            Tensor: N 3
-        """
-        DIS = torch.cdist(pos, pos)
-        DIS = DIS < cutoff
-        DIS = (torch.triu(DIS, diagonal= 1)).float()
-        args = torch.ones(pos.shape[0], dtype = torch.bool, device = pos.device)
-        while True:
-            N = pos.shape[0]
-            restrain_tensor = DIS.sum(0)
-            restrain_tensor -= ((restrain_tensor != 0).float() @ DIS)
-            SELECT = restrain_tensor == 0
-            DIS = DIS[SELECT][:, SELECT]
-            pos = pos[SELECT]
-            args[args.nonzero(as_tuple=True)] = SELECT
-            if N == pos.shape[0]:
-                break
-        return args
-
-    @staticmethod
-    def argmatch(pred: Tensor, targ: Tensor, cutoff: float) -> tuple[Tensor]:
-        # This function is only true when one prediction does not match two targets and one target can match more than two predictions
-        # return pred_ind, targ_ind
-        dis = torch.cdist(targ, pred)
-        dis = (dis < cutoff).nonzero()
-        dis = dis[:, (1, 0)]
-        unique, idx, counts = torch.unique(dis[...,1], sorted=True, return_inverse=True, return_counts=True)
-        ind_sorted = torch.argsort(idx, stable=True)
-        cum_sum = counts.cumsum(0)
-        if cum_sum.shape[0] != 0:
-            cum_sum = torch.cat((torch.tensor([0]), cum_sum[:-1]))
-        first_indicies = ind_sorted[cum_sum]
-        dis = dis[first_indicies]
-        
-        return dis[...,0], dis[...,1]
-    
-        
-
 class metStat():
     def __init__(self, value = None, reduction:str = "mean"):
         """To help you automatically find the mean or sum, which allows us to calculate something easily and consuming less space. 
@@ -410,3 +272,136 @@ class metStat():
     def value(self):
         return self._value
     
+class ConfusionMatrixCounter(object):
+    def __init__(self, ):
+        self.reset()
+    
+    def __call__(self, confusion_matrix: np.ndarray) -> None:
+        """
+        _summary_
+
+        Args:
+            confusion_matrix (Tensor): B C-1 S (TP, FP, FN)
+        """
+        if isinstance(confusion_matrix, Tensor):
+            if confusion_matrix.device != torch.device("cpu"):
+                confusion_matrix = confusion_matrix.detach().cpu().numpy()
+            else:
+                confusion_matrix = confusion_matrix.numpy()
+        TP, FP, FN, AR, AP, ACC, SUC = self._count(confusion_matrix)
+        self._TP.append(TP)
+        self._FP.append(FP)
+        self._FN.append(FN)
+        self._AR.append(AR)
+        self._AP.append(AP)
+        self._ACC.append(ACC)
+        self._SUC.append(SUC)
+
+    def reset(self):
+        self._TP = []
+        self._FP = []
+        self._FN = []
+        self._AR = []
+        self._AP = []
+        self._ACC = []
+        self._SUC = []
+    
+    def calc(self) -> tuple[np.ndarray]:
+        TP = np.concatenate(self._TP, axis = 0).sum(axis = 0)
+        FP = np.concatenate(self._FP, axis = 0).sum(axis = 0)
+        FN = np.concatenate(self._FN, axis = 0).sum(axis = 0)
+        AR = np.concatenate(self._AR, axis = 0).mean(axis = 0)
+        AP = np.concatenate(self._AP, axis = 0).mean(axis = 0)
+        ACC = np.concatenate(self._ACC, axis = 0).mean(axis = 0)
+        SUC = np.concatenate(self._SUC, axis = 0).mean(axis = 0)
+        return np.stack([TP, FP, FN, AR, AP, ACC, SUC], axis = -1)
+    
+    @staticmethod
+    @numba.jit(nopython=True)
+    def _count(cm: np.ndarray) -> tuple[np.ndarray]:
+        return cm[..., 0], cm[..., 1], cm[..., 2], np.nan_to_num(cm[..., 0] / (cm[..., 0] + cm[..., 2])), np.nan_to_num(cm[..., 0] / (cm[..., 0] + cm[..., 1])), np.nan_to_num(cm[..., 0] / np.sum(cm, axis=-1)), ((cm[..., 1] == 0) & (cm[...,2] == 0)).astype(np.int32)
+    
+    @property
+    def TP(self):
+        return self._TP[-1]
+    
+    @property
+    def FP(self):
+        return self._FP[-1]
+    
+    @property
+    def FN(self):
+        return self._FN[-1]
+    
+    @property
+    def AR(self):
+        return self._AR[-1]
+    
+    @property
+    def AP(self):
+        return self._AP[-1]
+    
+    @property
+    def ACC(self):
+        return self._ACC[-1]
+    
+    @property
+    def SUC(self):
+        return self._SUC[-1]
+
+class ConfusionCounter(object):
+    def __init__(self,):
+        self._cmc = []
+    
+    def add(self, cm: torch.Tensor) -> None:
+        if cm.device != torch.device("cpu"):
+            cm = cm.detach().cpu().numpy()
+        else:
+            cm = cm.numpy()
+        if cm.ndim == 3:
+            self._cmc.append(cm)
+        elif cm.ndim == 4:
+            self._cmc.extend(cm)
+        
+    def calc(self):
+        self._cmc = np.stack(self._cmc, axis = 0)
+        return self
+    
+    def reset(self):
+        self._cmc = []
+    
+    @property
+    def TP(self):
+        return self._cmc[..., 0].sum(axis = 0)
+    
+    @property
+    def FP(self):
+        return self._cmc[..., 1].sum(axis = 0)
+    
+    @property
+    def FN(self):
+        return self._cmc[..., 2].sum(axis = 0)
+    
+    @property
+    def AR(self):
+        return np.nan_to_num(self._cmc[..., 0] / (self._cmc[..., 0] + self._cmc[..., 2])).mean(axis = 0)
+    
+    @property
+    def AP(self):
+        return np.nan_to_num(self._cmc[..., 0] / (self._cmc[..., 0] + self._cmc[..., 1])).mean(axis = 0)
+    
+    @property
+    def ACC(self):
+        return np.nan_to_num(self._cmc[..., 0] / np.sum(self._cmc, axis=-1)).mean(axis = 0)
+    
+    @property
+    def SUC(self):
+        return ((self._cmc[..., 1] == 0) & (self._cmc[...,2] == 0)).astype(np.float_).mean(axis = 0)
+    
+class ConfusionRotate(ConfusionCounter):
+    def __init__(self):
+        super().__init__()
+        
+    @property
+    def ROT(self):
+        return self._cmc[..., 3].mean(axis = 0)

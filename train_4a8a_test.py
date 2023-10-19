@@ -5,21 +5,27 @@ import time
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from omegaconf import DictConfig
+from omegaconf import DictConfig 
 
 import dataset
 import model
 import utils
 
+def inp_transform(inp: torch.Tensor):
+    # B X Y Z C -> B C Z X Y
+    inp = inp.permute(0, 4, 3, 1, 2)
+    return inp
+
 def out_transform(inp: torch.Tensor):
-    inp = inp.permute(0, 2, 3, 4, 1)
+    # B C Z X Y -> B X Y Z C
+    inp = inp.permute(0, 3, 4, 2, 1)
     conf, pos, rotx, roty = torch.split(inp, [1, 3, 3, 3], dim = -1)
     pos = pos.sigmoid()
     c1 = rotx / torch.norm(rotx, dim=-1, keepdim=True)    
     c2 = roty - (c1 * roty).sum(-1, keepdim=True) * c1
     c2 = c2 / torch.norm(c2, dim=-1, keepdim=True)
     return torch.cat([conf, pos, c1, c2], dim=-1)
-    
+
 class Trainer():
     def __init__(self, 
                  work_dir: str,
@@ -36,7 +42,11 @@ class Trainer():
         self.work_dir = work_dir
         self.cfg = cfg
         self.rank = 0
-        self.model = model
+        if torch.cuda.is_available():
+            self.device = torch.device(f"cuda:{gpu_id}")
+        else:
+            self.device = torch.device(f"cpu")    
+        self.model = model.to(self.device)
         self.save_paths = []
         self.TrainLoader = TrainLoader
         self.TestLoader = TestLoader
@@ -44,8 +54,8 @@ class Trainer():
         self.Schedular = Schedular
         self.log = log
         self.tblog = tblog
-        self.Analyser = utils.MolecularAnalyser(cfg.data.real_size, cfg.data.nms)
-        self.ConfusionMatrixCounter = utils.ConfusionMatrixCounter()
+        self.Analyser = utils.parallelAnalyser(cfg.data.real_size, cfg.data.nms).to(self.device)
+        self.ConfusionCounter = utils.ConfusionRotate()
         self.LostStat = utils.metStat()
         self.LostConfidenceStat = utils.metStat()
         self.LostPositionStat = utils.metStat()
@@ -53,13 +63,13 @@ class Trainer():
         self.LostVAEStat = utils.metStat()
         self.GradStat = utils.metStat()
         self.RotStat = utils.metStat()
-        
+            
         self.Criterion = utils.conditionVAELoss(wc = cfg.criterion.cond_weight,
                                                 wpos_weight = cfg.criterion.pos_weight,
                                                 wpos = cfg.criterion.xyz_weight,
                                                 wr = cfg.criterion.rot_weight,
                                                 wvae = cfg.criterion.vae_weight
-                                                )
+                                                ).to(self.device)
         
         self.best = np.inf
         
@@ -67,25 +77,24 @@ class Trainer():
         for epoch in range(self.cfg.setting.epoch):
             self.log.info(f"Start training epoch: {epoch}...")
             epoch_start_time = time.time()
-            train_loss, train_grad, train_confusion = self.train_one_epoch(epoch)
-            logstr = f"\n============== Summary Train | Epoch {epoch:2d} ==============\nloss: {train_loss:.2e} | grad: {train_grad:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins"
-            
-            logstr += f"\n=================   Element - '{e}'    =================\n(Overall)  AP: {train_confusion[i,:,4].mean():.2f} | AR: {train_confusion[i,:,3].mean():.2f} | ACC: {train_confusion[i,:,5].mean():.2f} | SUC: {train_confusion[i,:,6].mean():.2f}"
-            for j, (low, high) in enumerate(zip(self.cfg.data.split[:-1], self.cfg.data.split[1:])):
-                logstr += f"\n({low:.1f}-{high:.1f}A) AP: {train_confusion[i,j,4]:.2f} | AR: {train_confusion[i,j,3]:.2f} | ACC: {train_confusion[i,j,5]:.2f} | SUC: {train_confusion[i,j,6]:.2f}\nTP: {train_confusion[i,j,0]:10.0f} | FP: {train_confusion[i,j,1]:10.0f} | FN: {train_confusion[i,j,2]:10.0f}"
+            loss, grad, cms, rot = self.train_one_epoch(epoch, log_every = self.cfg.setting.log_every)
+            logstr = f"\n============== Summary Train | Epoch {epoch:2d} ==============\nloss: {loss[0]:.2e} | grad: {grad:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins"
+            logstr += f"\nLoss | Confidence {loss[1]:.2e} | Position {loss[2]:.2e} | Rotation {loss[3]:.2e} | VAE {loss[4]:.2e}"
+            logstr += f"\n=================   Element - 'H2O'   ================="
+            logstr += f"\n(Overall)  AP: {cms.AP[0].mean():.2f} | AR: {cms.AP[0].mean():.2f} | ACC: {cms.ACC[0].mean():.2f} | SUC: {cms.SUC[0].mean():.2f} | Mmean: {rot:.2e}"
+            for i, (low, high) in enumerate(zip(self.cfg.data.split[:-1], self.cfg.data.split[1:])):
+                logstr += f"\n({low:.1f}-{high:.1f}A) AP: {cms.AP[0,i]:.2f} | AR: {cms.AR[0,i]:.2f} | ACC: {cms.ACC[0,i]:.2f} | SUC: {cms.SUC[0,i]:.2f}\nTP: {cms.TP[0,i]:10.0f} | FP: {cms.FP[0,i]:10.0f} | FN: {cms.FN[0,i]:10.0f}"
             self.log.info(logstr)
             
-            test_loss, test_confusion = self.test_one_epoch(epoch)
+            loss, cms, rot = self.test_one_epoch(epoch, log_every = self.cfg.setting.log_every)
             
-            logstr = f"\n============= Summary Test | Epoch {epoch:2d} ================\nloss: {test_loss:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins | {'Model saved' if (test_loss < self.best) and (self.rank == 0) else 'Model not saved'}"
-            
-            for i, e in enumerate(utils.const.ion_order.split()):
-                if e in self.cfg.data.ion_type:
-                    logstr += f"\n=================   Element - '{e}'    =================\n(Overall)  AP: {test_confusion[i,:,4].mean():.2f} | AR: {test_confusion[i,:,3].mean():.2f} | ACC: {test_confusion[i,:,5].mean():.2f} | SUC: {test_confusion[i,:,6].mean():.2f}"
-                    for j, (low, high) in enumerate(zip(self.cfg.data.split[:-1], self.cfg.data.split[1:])):
-                        logstr += f"\n({low:.1f}-{high:.1f}A) AP: {test_confusion[i,j,4]:.2f} | AR: {test_confusion[i,j,3]:.2f} | ACC: {test_confusion[i,j,5]:.2f} | SUC: {test_confusion[i,j,6]:.2f}\nTP: {test_confusion[i,j,0]:10.0f} | FP: {test_confusion[i,j,1]:10.0f} | FN: {test_confusion[i,j,2]:10.0f}"
-            
-            self.save_model(epoch, test_loss)
+            logstr = f"\n============= Summary Test | Epoch {epoch:2d} ================\nloss: {loss[0]:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins | {'Model saved' if (loss[0] < self.best) and (self.rank == 0) else 'Model not saved'}"
+            logstr += f"\n=================   Element - 'H2O'   ================="
+            logstr += f"\n(Overall)  AP: {cms.AP[0].mean():.2f} | AR: {cms.AP[0].mean():.2f} | ACC: {cms.ACC[0].mean():.2f} | SUC: {cms.SUC[0].mean():.2f} | Mmean: {rot:.2e}"
+            for i, (low, high) in enumerate(zip(self.cfg.data.split[:-1], self.cfg.data.split[1:])):
+                logstr += f"\n({low:.1f}-{high:.1f}A) AP: {cms.AP[0,i]:.2f} | AR: {cms.AR[0,i]:.2f} | ACC: {cms.ACC[0,i]:.2f} | SUC: {cms.SUC[0,i]:.2f}\nTP: {cms.TP[0,i]:10.0f} | FP: {cms.FP[0,i]:10.0f} | FN: {cms.FN[0,i]:10.0f}"
+                
+            self.save_model(epoch, loss[0])
             self.log.info(logstr)
         
     def train_one_epoch(self, epoch, log_every: int = 25) -> tuple[torch.Tensor]:
@@ -97,27 +106,36 @@ class Trainer():
         self.LostVAEStat.reset()
         self.GradStat.reset()
         self.RotStat.reset()
-        self.ConfusionMatrixCounter.reset()
-        for i, (filename, box4a, box8a, temp) in enumerate(self.TrainLoader):
-            out, mu, var = self.model(box4a, temp)
-            out = out_transform(out)
-            loss_wc, loss_pos, loss_r, loss_vae = self.Criterion(out, box8a, mu, var)
+        self.ConfusionCounter.reset()
+        for i, (filenames, inps, targs, embs) in enumerate(self.TrainLoader):
+            inps = inps.to(self.device, non_blocking = True)
+            targs = targs.to(self.device, non_blocking = True)
+            embs = embs.to(self.device, non_blocking = True)
+            preds, mu, var = self.model(inps, embs)
+            
+            loss_wc, loss_pos, loss_r, loss_vae = self.Criterion(preds, targs, mu, var)
             loss = loss_wc + loss_pos + loss_r + loss_vae
+                        
             self.Optimizer.zero_grad()
             loss.backward()
-            self.Optimizer.step()
             grad = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.criterion.clip_grad, error_if_nonfinite=False)
+
+            self.Optimizer.step()
+            
+            
             self.LostStat.add(loss)
             self.LostConfidenceStat.add(loss_wc)
             self.LostPositionStat.add(loss_pos)
             self.LostRotationStat.add(loss_r)
             self.LostVAEStat.add(loss_vae)
             self.GradStat.add(grad)
-            confusion_matrix, MS = self.Analyser(out, box8a)
-            self.ConfusionMatrixCounter(confusion_matrix)
-            self.RotStat.add(MS)
+    
+            CMS = self.Analyser(preds, targs)
+            self.ConfusionCounter.add(CMS[...,:3])
+            self.RotStat.add(CMS[...,3].mean(dim=[1,2]))
+            
             if self.rank == 0 and i % log_every == 0:
-                self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TrainLoader):5d} | Loss {loss:.2e} | Grad {grad:.2e}")
+                self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TrainLoader):5d} | Loss {loss:.2e} | Grad {grad:.2e} | conf {loss_wc:.2e} | pos {loss_pos:.2e} | rot {loss_r:.2e} | vae {loss_vae:.2e}")
                 self.tblog.add_scalar("Train/Loss", loss, epoch * len(self.TrainLoader) + i)
                 self.tblog.add_scalar("Train/LossWC", loss_wc, epoch * len(self.TrainLoader) + i)
                 self.tblog.add_scalar("Train/LossPos", loss_pos, epoch * len(self.TrainLoader) + i)
@@ -126,13 +144,13 @@ class Trainer():
                 self.tblog.add_scalar("Train/Grad", grad, epoch * len(self.TrainLoader) + i)
                 self.tblog.add_scalar("Train/LR", self.Schedular.get_last_lr()[0], epoch * len(self.TrainLoader) + i)
                 
-                self.tblog.add_scalars(f"Train/AP {0:.1f}-{4:.1f}A", {"H2O": self.ConfusionMatrixCounter.AP[0,0]})
-                self.tblog.add_scalars(f"Train/AR {0:.1f}-{4:.1f}A", {"H2O": self.ConfusionMatrixCounter.AR[0,0]})
-                self.tblog.add_scalars(f"Train/ACC {0:.1f}-{4:.1f}A", {"H2O": self.ConfusionMatrixCounter.ACC[0,0]})
-                self.tblog.add_scalars(f"Train/SUC {0:.1f}-{4:.1f}A", {"H2O": self.ConfusionMatrixCounter.SUC[0,0]})
-                
         self.Schedular.step()
-        return [self.LostStat.calc(),self.LostConfidenceStat.calc(), self.LostPositionStat.calc(), self.LostRotationStat.calc(), self.LostVAEStat.calc()], self.GradStat.calc(), self.ConfusionMatrixCounter.calc()
+        losses = [self.LostStat.calc(),self.LostConfidenceStat.calc(), self.LostPositionStat.calc(), self.LostRotationStat.calc(), self.LostVAEStat.calc()]
+        grad = self.GradStat.calc()
+        cms = self.ConfusionCounter.calc()
+        rot = self.RotStat.calc()
+        
+        return losses, grad, cms, rot
     
     @torch.no_grad()
     def test_one_epoch(self, epoch, log_every: int = 25) -> tuple[torch.Tensor]:
@@ -142,19 +160,25 @@ class Trainer():
         self.LostPositionStat.reset()
         self.LostRotationStat.reset()
         self.LostVAEStat.reset()
-        self.ConfusionMatrixCounter.reset()
-        for i, (filename, box4a, box8a, temp) in enumerate(self.TestLoader):
-            out, mu, var = self.model(box4a, temp)
-            out = out_transform(out)
-            loss_wc, loss_pos, loss_r, loss_vae = self.Criterion(out, box8a, mu, var)
+        self.ConfusionCounter.reset()
+        self.RotStat.reset()
+        for i, (filenames, preds, targs, embs) in enumerate(self.TestLoader):
+            preds = preds.to(self.device)
+            targs = targs.to(self.device)
+            embs = embs.to(self.device)
+            preds, mu, logvar = self.model(preds, embs)
+
+            loss_wc, loss_pos, loss_r, loss_vae = self.Criterion(preds, targs, mu, logvar)
             loss = loss_wc + loss_pos + loss_r + loss_vae
-            confusion_matrix = self.Analyser(out, box8a)
             self.LostStat.add(loss)
             self.LostConfidenceStat.add(loss_wc)
             self.LostPositionStat.add(loss_pos)
             self.LostRotationStat.add(loss_r)
             self.LostVAEStat.add(loss_vae)
-            self.ConfusionMatrixCounter(confusion_matrix)
+            
+            CMS = self.Analyser(preds, targs)
+            self.ConfusionCounter.add(CMS[...,:3])
+            self.RotStat.add(CMS[...,3])
             if self.rank == 0 and i % log_every == 0:
                 self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TestLoader):5d} | Loss {loss:.2e}")
                 self.tblog.add_scalar("Test/Loss", loss, epoch * len(self.TestLoader) + i)
@@ -163,8 +187,13 @@ class Trainer():
                 self.tblog.add_scalar("Test/LossRot", loss_r, epoch * len(self.TestLoader) + i)
                 self.tblog.add_scalar("Test/LossVAE", loss_vae, epoch * len(self.TestLoader) + i)
                 
-        return self.LostStat.calc(), self.ConfusionMatrixCounter.calc()
-    
+        losses = [self.LostStat.calc(),self.LostConfidenceStat.calc(), self.LostPositionStat.calc(), self.LostRotationStat.calc(), self.LostVAEStat.calc()]
+        cms = self.ConfusionCounter.calc()
+        rot = self.RotStat.calc()
+        
+        return losses, cms, rot
+        
+        
     def save_model(self, epoch, metric):
         print(self.rank)
         if self.rank == 0:
@@ -185,19 +214,21 @@ def load_train_objs(rank, cfg: DictConfig):
     
     net = getattr(model, cfg.model.net)(**cfg.model.params)
     
+    net.input_transform = inp_transform
+    net.output_transform = out_transform
+    
     log.info(f"Network parameters: {sum([p.numel() for p in net.parameters()])}")
     
     if cfg.model.checkpoint is None:
             log.info("Start a new model")
     else:
-        missing = utils.model_load(net, cfg.model.checkpoint, True)
+        loaded = utils.model_load(net, cfg.model.checkpoint, True)
         log.info(f"Load parameters from {cfg.model.checkpoint}")
-        log.info(f"Missing keys: {missing}")
             
-    TrainDataset = dataset.AFMGenDataset(cfg.data.train_path, transform=None)
-    TestDataset = dataset.AFMDataset(cfg.data.test_path, transform=None)
+    TrainDataset = dataset.AFMGen8ADataset(cfg.data.train_path, transform=None)
+    TestDataset = dataset.AFMGen8ADataset(cfg.data.test_path, transform=None)
     
-    Optimizer = torch.optim.AdamW(net.parameters(), 
+    Optimizer = torch.optim.Adam(net.parameters(), 
                                   lr=cfg.criterion.lr, 
                                   weight_decay=cfg.criterion.weight_decay
                                  )
@@ -209,7 +240,7 @@ def load_train_objs(rank, cfg: DictConfig):
 def prepare_dataloader(train_data, test_data, cfg: DictConfig):
     TrainLoader = torch.utils.data.DataLoader(train_data, 
                                               batch_size=cfg.setting.batch_size, 
-                                              shuffle=False, 
+                                              shuffle=True, 
                                               num_workers=cfg.setting.num_workers, 
                                               pin_memory=cfg.setting.pin_memory,
                                               )
@@ -224,7 +255,7 @@ def prepare_dataloader(train_data, test_data, cfg: DictConfig):
     return TrainLoader, TestLoader
 
 
-@hydra.main(config_path="conf", config_name="config", version_base=None) # hydra will automatically relocate the working dir.
+@hydra.main(config_path="conf", config_name="4a8a", version_base=None) # hydra will automatically relocate the working dir.
 def main(cfg):
     rank = 0
     model, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog = load_train_objs(rank, cfg)

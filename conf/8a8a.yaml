@@ -1,0 +1,14 @@
+defaults:
+  - _self_
+  - model: 8a8a
+  - setting: test
+  - data: 8a8a
+  - criterion: 4a8a
+
+test_path: ${data.test_path}
+checkpoint: ${model.checkpoint}
+label: False
+save_pred: False
+pred_loop: 3
+transform: False
+output: ~

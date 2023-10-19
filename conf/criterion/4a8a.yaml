@@ -1,14 +1,14 @@
-lr: 3.0e-4
+lr: 1.0e-4
 weight_decay: 5.0e-3
-clip_grad: 5.0
+clip_grad: 3.0
 pos_weight: 10
-cond_weight: 0.4
-xyz_weight: 0.3
-rot_weight: 0.3
-vae_weight: 1.0
+cond_weight: 1.0
+xyz_weight: 2.0
+rot_weight: 0.25
+vae_weight: 0.01
 
 schedular:
   name: StepLR
   params:
     step_size: 2
-    gamma: 0.5
+    gamma: 0.8

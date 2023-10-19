@@ -1,0 +1,11 @@
+train_path: /gpfs/share/home/2000012508/Documents/data/ice_8_4A_train.hdf5
+test_path: /gpfs/share/home/2000012508/Documents/data/ice_8_4A_test.hdf5
+valid_path: ~
+
+image_size: [4, 25, 25]
+real_size: [25.0, 25.0, 8.0]
+ion_type: ['O', 'H']
+format: CZXY
+domain_adapt: False
+split: [0.0, 4.0, 8.0]
+nms: True

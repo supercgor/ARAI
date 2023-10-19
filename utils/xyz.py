@@ -32,18 +32,30 @@ def read(path: str) -> tuple[list[np.ndarray[np.float_]], list[list[str]]]:
     return types, molecules, charges, ids
 
 
-def write(path: str, types: list[np.ndarray[np.str_]], molecules: list[list[np.ndarray[np.float_]]], charges: list[list[np.float_]], ids: list[list[int]] = None):
+def write(path: str, types: list[np.ndarray[np.str_]], molecules: list[list[np.ndarray[np.float_]]], charges: list[list[np.float_]] = None, ids: list[list[int]] = None):
     out = f"{sum(map(len, molecules))}\n\n"
     if ids is None:
         idx = 0
-        for i, (type, molecule, charge) in enumerate(zip(types, molecules, charges)):
-            for j, (t, m, c) in enumerate(zip(type, molecule, charge)):
-                out += f"{t} {m[0]:11.8f} {m[1]:11.8f} {m[2]:11.8f} {c:11.8f} {idx:8d}\n"
-                idx += 1
+        if charges is None:
+            for i, (type, molecule) in enumerate(zip(types, molecules)):
+                for j, (t, m) in enumerate(zip(type, molecule)):
+                    out += f"{t} {m[0]:11.8f} {m[1]:11.8f} {m[2]:11.8f} {idx:8d}\n"
+                    idx += 1
+        else:
+            for i, (type, molecule, charge) in enumerate(zip(types, molecules, charges)):
+                for j, (t, m, c) in enumerate(zip(type, molecule, charge)):
+                    out += f"{t} {m[0]:11.8f} {m[1]:11.8f} {m[2]:11.8f} {c:11.8f} {idx:8d}\n"
+                    idx += 1
     else:
-        for i, (type, molecule, charge, id) in enumerate(zip(types, molecules, charges, ids)):
-            for j, (t, m, c, idx) in enumerate(zip(type, molecule, charge, id)):
-                out += f"{t} {m[0]:11.8f} {m[1]:11.8f} {m[2]:11.8f} {c:11.8f} {idx:8d}\n"
+        if charges is None:
+            for i, (type, molecule, id) in enumerate(zip(types, molecules, ids)):
+                for j, (t, m, idx) in enumerate(zip(type, molecule, id)):
+                    out += f"{t} {m[0]:11.8f} {m[1]:11.8f} {m[2]:11.8f} {idx:8d}\n"
+        else:
+            for i, (type, molecule, charge, id) in enumerate(zip(types, molecules, charges, ids)):
+                for j, (t, m, c, idx) in enumerate(zip(type, molecule, charge, id)):
+                    out += f"{t} {m[0]:11.8f} {m[1]:11.8f} {m[2]:11.8f} {c:11.8f} {idx:8d}\n"
                 
     with open(path, "w") as f:
         f.write(out)
+
