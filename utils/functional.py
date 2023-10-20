@@ -147,12 +147,10 @@ def orgvec2box(pd_pos, pd_R, box_size) -> torch.Tensor:
     return box
 
 def box2box(box, real_size = (25.0, 25.0, 4.0), threshold = 0.5, nms= True, sort=True, cutoff=0.5):
-    box = box.permute(1,2,0,3)
     xyz = torch.as_tensor(box.shape[:3], dtype = box.dtype, device = box.device)
     _, pos, rot = box2orgvec(box, threshold, cutoff, real_size, sort = sort, nms = nms)
     pos /= xyz
     box = orgvec2box(pos, rot, box.shape[:3])
-    box = box.permute(2,0,1,3)
     return box
 
 def inverse_sigmoid(x: torch.Tensor | float) -> torch.Tensor | float:

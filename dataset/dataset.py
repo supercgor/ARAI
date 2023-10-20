@@ -95,16 +95,11 @@ class AFMGenDataset(Dataset):
             R = functional.getWaterRotate(pos.copy(), self._invref)
             box8a[Oind[0], Oind[1], Oind[2]] = np.concatenate([[1], Ooff, R.flatten()[:6]])
             
-        box8a = box8a[:,:,4:]
+        box8a = box8a[:,:,:4]
         
-        box4a = torch.as_tensor(box4a, dtype=torch.float).permute(3, 2, 0, 1)
-        box8a = torch.as_tensor(box8a, dtype=torch.float).permute(2, 0, 1, 3)
+        box4a = torch.as_tensor(box4a, dtype=torch.float) # .permute(3, 2, 0, 1)
+        box8a = torch.as_tensor(box8a, dtype=torch.float) # .permute(2, 0, 1, 3)
         
-        # print(pos)
-        # _, tg_pos, tg_R = functional.box2orgvec(box8a.detach().cpu().permute(1,2,0,3), 0.5, 1.0, (25.0,25.0,4.0), False, False)
-        # print(R)
-        # print(tg_R[-1])
-        # print(tg_pos[-1])
         hfile.close()
         return file_name, box4a, box8a, torch.as_tensor([temp], dtype=torch.float)
     

@@ -1,11 +1,11 @@
 lr: 1.0e-4
-weight_decay: 5.0e-3
+weight_decay: 0.0
 clip_grad: 3.0
 pos_weight: 10
 cond_weight: 1.0
 xyz_weight: 2.0
 rot_weight: 0.25
-vae_weight: 0.01
+vae_weight: 0.5
 
 schedular:
   name: StepLR

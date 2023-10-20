@@ -185,7 +185,8 @@ class parallelAnalyser(nn.Module):
         match_tg_pos = tg_pos[tg_match_ids] # N 3
         
         ang = torch.einsum("bij,bij->bi", pd_R, tg_R) / pd_R.norm(dim=-1) / tg_R.norm(dim=-1)
-        ang.clamp_(-1, 1).acos_().div_(torch.pi/ 180.0).nan_to_num_(90.0)
+        ang = torch.div(torch.arccos(ang.clamp(-1, 1)), torch.pi / 180.0)
+        ang = torch.where(ang > 90, 180 - ang, ang)
         
         for i, (low, high) in enumerate(zip(split[:-1], split[1:])):
             match_tg_mask = (match_tg_pos[:, 2] >= low) & (match_tg_pos[:, 2] < high) # TP
@@ -384,15 +385,15 @@ class ConfusionCounter(object):
     
     @property
     def AR(self):
-        return np.nan_to_num(self._cmc[..., 0] / (self._cmc[..., 0] + self._cmc[..., 2])).mean(axis = 0)
+        return np.nan_to_num(self._cmc[..., 0] / (self._cmc[..., 0] + self._cmc[..., 2]), nan = 0, posinf = 1.0).mean(axis = 0)
     
     @property
     def AP(self):
-        return np.nan_to_num(self._cmc[..., 0] / (self._cmc[..., 0] + self._cmc[..., 1])).mean(axis = 0)
+        return np.nan_to_num(self._cmc[..., 0] / (self._cmc[..., 0] + self._cmc[..., 1]), nan = 0, posinf = 1.0).mean(axis = 0)
     
     @property
     def ACC(self):
-        return np.nan_to_num(self._cmc[..., 0] / np.sum(self._cmc, axis=-1)).mean(axis = 0)
+        return np.nan_to_num(self._cmc[..., 0] / np.sum(self._cmc, axis=-1), nan = 0, posinf = 1.0).mean(axis = 0)
     
     @property
     def SUC(self):

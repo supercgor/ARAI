@@ -11,8 +11,14 @@ import dataset
 import model
 import utils
 
+def inp_transform(inp: torch.Tensor):
+    # B X Y Z C -> B C Z X Y
+    inp = inp.permute(0, 4, 3, 1, 2)
+    return inp
+
 def out_transform(inp: torch.Tensor):
-    inp = inp.permute(0, 2, 3, 4, 1)
+    # B C Z X Y -> B X Y Z C
+    inp = inp.permute(0, 3, 4, 2, 1)
     conf, pos, rotx, roty = torch.split(inp, [1, 3, 3, 3], dim = -1)
     pos = pos.sigmoid()
     c1 = rotx / torch.norm(rotx, dim=-1, keepdim=True)    
@@ -102,7 +108,6 @@ class Trainer():
             targs = targs.to(self.device)
             embs = embs.to(self.device)
             preds, mu, logvar = self.model(preds, embs)
-            preds = out_transform(preds)
             loss_wc, loss_pos, loss_r, loss_vae = self.Criterion(preds, targs, mu, logvar)
             loss = loss_wc + loss_pos + loss_r + loss_vae
             self.LostStat.add(loss)
@@ -131,29 +136,34 @@ class Trainer():
     @torch.no_grad()
     def pred_one_epoch(self, epoch, log_every: int = 25) -> tuple[torch.Tensor]:
         self.model.eval()
-        for i, (filenames, preds, targs, embs) in enumerate(self.TestLoader):
-            preds = preds.permute(0,2,3,4,1).to(self.device)
+        for i, (filenames, inps, targs, embs) in enumerate(self.TestLoader):
+            inps = inps.to(self.device)
             embs = embs.to(self.device)
             
-            out = [preds.clone()]
+            out = [inps.clone()]
+            preds = inps
             for j in range(self.cfg.pred_loop):
-                preds, mu, logvar = self.model(preds.permute(0, 4, 1, 2, 3), embs)
-                preds = out_transform(preds)
-                preds = torch.stack([utils.functional.box2box(pred, real_size=self.cfg.data.real_size, threshold=0.0, nms=True, sort=True, cutoff=2.0) for pred in preds], dim = 0)
-                out.append(preds.clone())
-                
-            print(torch.allclose(out[1], out[2], rtol=1e-3))
-            
-            preds = torch.cat(out, dim=1)# B Z*l X Y 10
+                preds, mu, logvar = self.model(preds, embs)
+                preds = preds[..., :4, :]
+                preds = torch.stack([utils.functional.box2box(pred, real_size=(25.0, 25.0, 4.0), threshold=0.0, nms=True, sort=True, cutoff=2.0) for pred in preds], dim = 0)
+                out.insert(0, preds.clone())
+                            
+            preds = torch.cat(out, dim=3)# B X Y Z*L 10
             
             for b in range(preds.shape[0]):
                 pred = preds[b]
                 filename = filenames[b]
-                pred = pred.detach().cpu().permute(1,2,0,3)
+                pred = pred.detach().cpu()
                 conf, pos, r = utils.functional.box2orgvec(pred, 0.0, 2.0, (25.0, 25.0, 4.0 * (self.cfg.pred_loop+1)), True, True)
                 pred = utils.functional.makewater(pos, r)
                 utils.xyz.write(f"{self.work_dir}/{filename}.xyz", np.array([["O", "H", "H"]], dtype=np.str_).repeat(len(pred), axis=0), pred)
-
+                # conf, pos, r = utils.functional.box2orgvec(targs[b].detach().cpu(), 0.0, 2.0, (25.0, 25.0, 8.0), False, False)
+                # targ = utils.functional.makewater(pos, r)
+                # utils.xyz.write(f"{self.work_dir}/{filename}_targ.xyz", np.array([["O", "H", "H"]], dtype=np.str_).repeat(len(targ), axis=0), targ)
+                # conf, pos, r = utils.functional.box2orgvec(inps[b].detach().cpu(), 0.0, 2.0, (25.0, 25.0, 4.0), False, False)
+                # inp = utils.functional.makewater(pos, r)
+                # utils.xyz.write(f"{self.work_dir}/{filename}_inp.xyz", np.array([["O", "H", "H"]], dtype=np.str_).repeat(len(inp), axis=0), inp)
+                
             if self.rank == 0 and i % log_every == 0:
                 self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TestLoader):5d}")
             
@@ -167,6 +177,9 @@ def load_train_objs(rank, cfg: DictConfig):
     
     net = getattr(model, cfg.model.net)(**cfg.model.params)
     
+    net.input_transform = inp_transform
+    net.output_transform = out_transform
+    
     log.info(f"Network parameters: {sum([p.numel() for p in net.parameters()])}")
     
     if cfg.model.checkpoint is None:
@@ -175,7 +188,7 @@ def load_train_objs(rank, cfg: DictConfig):
         loaded = utils.model_load(net, cfg.model.checkpoint, True)
         log.info(f"Load parameters from {cfg.model.checkpoint}")
             
-    TestDataset = dataset.AFMGenDataset(cfg.data.test_path, transform=None)
+    TestDataset = dataset.AFMGen8ADataset(cfg.data.test_path, transform=None)
     
     return net, TestDataset, log, tblog
 

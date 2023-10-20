@@ -27,34 +27,24 @@ def out_transform(inp: torch.Tensor):
     return torch.cat([conf, pos, c1, c2], dim=-1)
     
 class Trainer():
-    def __init__(self, 
-                 work_dir: str,
-                 cfg: DictConfig,
-                 model: torch.nn.Module,
-                 TrainLoader,
-                 TestLoader,
-                 Optimizer: torch.optim.Optimizer,
-                 Schedular: torch.optim.lr_scheduler,
-                 log,
-                 tblog,
-                 gpu_id: int,
-                ) -> None:
-        self.work_dir = work_dir
+    def __init__(self, rank: int, cfg: DictConfig, model: torch.nn.Module, TrainLoader, TestLoader, Optimizer: torch.optim.Optimizer, Schedular: torch.optim.lr_scheduler,
+                 log, tblog):
+        self.work_dir = hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir']
         self.cfg = cfg
-        self.rank = 0
-        if torch.cuda.is_available():
-            self.device = torch.device(f"cuda:{gpu_id}")
-        else:
-            self.device = torch.device(f"cpu")    
+        self.rank = rank
+        self.device = torch.device(f"cuda:{self.rank}") if torch.cuda.is_available() else torch.device(f"cpu")
         self.model = model.to(self.device)
-        self.save_paths = []
+        self.Analyser = utils.parallelAnalyser(cfg.data.real_size, cfg.data.nms).to(self.device)
+        self.Criterion = utils.conditionVAELoss(wc = cfg.criterion.cond_weight,
+                                                wpos_weight = cfg.criterion.pos_weight,
+                                                wpos = cfg.criterion.xyz_weight,
+                                                wr = cfg.criterion.rot_weight,
+                                                wvae = cfg.criterion.vae_weight
+                                                ).to(self.device)
         self.TrainLoader = TrainLoader
         self.TestLoader = TestLoader
         self.Optimizer = Optimizer
         self.Schedular = Schedular
-        self.log = log
-        self.tblog = tblog
-        self.Analyser = utils.parallelAnalyser(cfg.data.real_size, cfg.data.nms).to(self.device)
         self.ConfusionCounter = utils.ConfusionRotate()
         self.LostStat = utils.metStat()
         self.LostConfidenceStat = utils.metStat()
@@ -63,14 +53,10 @@ class Trainer():
         self.LostVAEStat = utils.metStat()
         self.GradStat = utils.metStat()
         self.RotStat = utils.metStat()
-            
-        self.Criterion = utils.conditionVAELoss(wc = cfg.criterion.cond_weight,
-                                                wpos_weight = cfg.criterion.pos_weight,
-                                                wpos = cfg.criterion.xyz_weight,
-                                                wr = cfg.criterion.rot_weight,
-                                                wvae = cfg.criterion.vae_weight
-                                                ).to(self.device)
         
+        self.log = log
+        self.tblog = tblog
+        self.save_paths = []
         self.best = np.inf
         
     def fit(self):
@@ -117,6 +103,7 @@ class Trainer():
             loss = loss_conf + loss_pos + loss_r + loss_vae
                         
             self.Optimizer.zero_grad()
+            
             loss.backward()
             grad = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.criterion.clip_grad, error_if_nonfinite=False)
             
@@ -253,22 +240,12 @@ def prepare_dataloader(train_data, test_data, cfg: DictConfig):
     return TrainLoader, TestLoader
 
 
-@hydra.main(config_path="conf", config_name="8a8a", version_base=None) # hydra will automatically relocate the working dir.
+@hydra.main(config_path="config", config_name="8a8a", version_base=None) # hydra will automatically relocate the working dir.
 def main(cfg):
     rank = 0
     model, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog = load_train_objs(rank, cfg)
     TrainLoader, TestLoader = prepare_dataloader(TrainDataset, TestDataset, cfg)
-    trainer = Trainer(hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir'],
-                      cfg,
-                      model,
-                      TrainLoader,
-                      TestLoader,
-                      Optimizer,
-                      Schedular,
-                      log,
-                      tblog,
-                      rank,
-                      )
+    trainer = Trainer(rank, cfg, model, TrainLoader, TestLoader, Optimizer, Schedular, log, tblog)
     trainer.fit()
 
 if __name__ == "__main__":

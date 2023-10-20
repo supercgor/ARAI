@@ -47,7 +47,7 @@ class conditionVAELoss(nn.Module):
     
     # https://github.com/AntixK/PyTorch-VAE/blob/master/configs/vae.yaml
     def vaeloss(self, mu, logvar):
-        return -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum(dim = 1).mean()
+        return -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).mean(dim = 1).mean()
     
     def forward(self, pred, targ, mu, logvar):
         pd_conf, pd_pos, pd_rt = torch.split(pred, [1, 3, 6], dim = -1)

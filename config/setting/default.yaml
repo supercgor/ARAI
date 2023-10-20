@@ -3,4 +3,5 @@ batch_size: 8
 num_workers: 6
 pin_memory: True
 log_every: 200
-  
+max_save: 99
+
