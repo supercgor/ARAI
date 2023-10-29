@@ -1,4 +1,4 @@
-epoch: 20
+epoch: 5
 batch_size: 8
 num_workers: 6
 pin_memory: True

@@ -1,0 +1,7 @@
+train_path: /gpfs/share/home/2000012508/Documents/data/ice_16A_train.hdf5
+test_path: /gpfs/share/home/2000012508/Documents/data/ice_16A_test.hdf5
+
+image_size: [4, 25, 25]
+real_size: [25.0, 25.0, 4.0]
+ion_type: ['H2O']
+split: [0.0, 4.0]

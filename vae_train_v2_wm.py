@@ -7,25 +7,36 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 from omegaconf import DictConfig 
 
+from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, get_rank, destroy_process_group
+
+
 import dataset
 import model
 import utils
 
+def ddp_setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    init_process_group("nccl", rank=rank, world_size=world_size)
+    torch.cuda.set_device(rank)
+    
 class Trainer():
     def __init__(self, rank, cfg, model, TrainLoader, TestLoader, Optimizer, Schedular, log, tblog):
         self.work_dir = hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir']
         self.cfg = cfg
-        self.rank = rank
-        self.device =  torch.device(f"cuda:{rank}") if torch.cuda.is_available() else torch.device(f"cpu")    
-        self.model = model.to(self.device)
-        self.Analyser = utils.parallelAnalyser(cfg.dataset.real_size, split = self.cfg.dataset.split).to(self.device)
+        self.rank = get_rank()
+        self.gpu_id = rank
+        self.model = model.to(self.gpu_id)
+        self.model = DDP(self.model, device_ids=[self.gpu_id])
+        self.Analyser = utils.parallelAnalyser(cfg.dataset.real_size, split = self.cfg.dataset.split).to(self.gpu_id)
         self.Criterion = utils.conditionVAELoss(wc = cfg.criterion.cond_weight,
                                                 wpos_weight = cfg.criterion.pos_weight,
                                                 wpos = cfg.criterion.xyz_weight,
                                                 wr = cfg.criterion.rot_weight,
                                                 wvae = cfg.criterion.vae_weight
-                                                ).to(self.device)
-        
+                                                ).to(self.gpu_id)
         self.TrainLoader = TrainLoader
         self.TestLoader = TestLoader
         self.Optimizer = Optimizer
@@ -80,27 +91,23 @@ class Trainer():
         self.RotStat.reset()
         self.ConfusionCounter.reset()
         for i, (filenames, inps, targs, embs) in enumerate(self.TrainLoader):
-            inps = inps.to(self.device, non_blocking = True)
-            targs = targs.to(self.device, non_blocking = True)
-            embs = embs.to(self.device, non_blocking = True)
+            inps = inps.to(self.gpu_id, non_blocking = True)
+            targs = targs.to(self.gpu_id, non_blocking = True)
+            embs = embs.to(self.gpu_id, non_blocking = True)
             preds, mu, logvar = self.model(inps, embs)
             loss_conf, loss_pos, loss_r, loss_vae = self.Criterion(preds, targs, mu, logvar)
             
             predsp = torch.cat([preds[...,(0,)].sigmoid(), preds[...,1:]], dim=-1)
             predsp = torch.where(predsp[...,(0,)] < 0.5, torch.zeros_like(predsp), predsp)
             
-            mup, logvarp = self.model._forward_encoder(predsp, None)
+            mup, logvarp = self.model.forward(predsp, None, encoder = True)
             vae_add = self.Criterion.wvae * self.Criterion.vaeloss(mup, logvarp)
             loss_vae = (loss_vae + vae_add)/2
             
-            loss = loss_conf + loss_pos + loss_r + loss_vae
-
-                        
+            loss = loss_conf + loss_pos + loss_r + loss_vae                        
             self.Optimizer.zero_grad()
-            
             loss.backward()
             grad = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.criterion.clip_grad, error_if_nonfinite=False)
-            
             self.Optimizer.step()
             
             self.LostStat.add(loss)
@@ -148,21 +155,17 @@ class Trainer():
         self.ConfusionCounter.reset()
         self.RotStat.reset()
         for i, (filenames, inps, targs, embs) in enumerate(self.TestLoader):
-            inps = inps.to(self.device, non_blocking = True)
-            targs = targs.to(self.device, non_blocking = True)
-            embs = embs.to(self.device, non_blocking = True)
+            inps = inps.to(self.gpu_id, non_blocking = True)
+            targs = targs.to(self.gpu_id, non_blocking = True)
+            embs = embs.to(self.gpu_id, non_blocking = True)
             preds, mu, logvar = self.model(inps, embs)
             loss_conf, loss_pos, loss_r, loss_vae = self.Criterion(preds, targs, mu, logvar)
             
             predsp = torch.cat([preds[...,(0,)].sigmoid(), preds[...,1:]], dim=-1)
             predsp = torch.where(predsp[...,(0,)] < 0.5, torch.zeros_like(predsp), predsp)
             
-            mup, logvarp = self.model._forward_encoder(predsp, None)
-            vae_add = self.Criterion.wvae * self.Criterion.vaeloss(mup, logvarp)
-            loss_vae = (loss_vae + vae_add)/2
-            
             loss = loss_conf + loss_pos + loss_r + loss_vae
-                        
+                            
             self.LostStat.add(loss)
             self.LostConfidenceStat.add(loss_conf)
             self.LostPositionStat.add(loss_pos)
@@ -215,9 +218,11 @@ def load_train_objs(rank, cfg: DictConfig):
     else:
         loaded = utils.model_load(net, cfg.model.checkpoint, True)
         log.info(f"Load parameters from {cfg.model.checkpoint}")
-            
-    TrainDataset = dataset.AFMGenDataset(cfg.dataset.train_path, transform=None)
-    TestDataset = dataset.AFMGenDataset(cfg.dataset.test_path, transform=None)
+    
+    size = cfg.model.params.in_size
+    size = [size[1],size[2],size[0]]
+    TrainDataset = dataset.ZVarAFM(cfg.dataset.train_path, box_size = size)
+    TestDataset = dataset.ZVarAFM(cfg.dataset.test_path, box_size = size)
     
     Optimizer = torch.optim.Adam(net.parameters(), lr=cfg.criterion.lr, weight_decay=cfg.criterion.weight_decay)
     
@@ -243,9 +248,10 @@ def out_transform(inp: torch.Tensor):
 def prepare_dataloader(train_data, test_data, cfg: DictConfig):
     TrainLoader = torch.utils.data.DataLoader(train_data, 
                                               batch_size=cfg.setting.batch_size, 
-                                              shuffle=True, 
+                                              shuffle=False, 
                                               num_workers=cfg.setting.num_workers, 
                                               pin_memory=cfg.setting.pin_memory,
+                                              sampler=DistributedSampler(train_data)
                                               )
         
     TestLoader = torch.utils.data.DataLoader(test_data,
@@ -253,18 +259,22 @@ def prepare_dataloader(train_data, test_data, cfg: DictConfig):
                                              shuffle=False,
                                              num_workers=cfg.setting.num_workers,
                                              pin_memory=cfg.setting.pin_memory,
+                                             sampler = DistributedSampler(test_data)
                                              )
     
     return TrainLoader, TestLoader
 
 
-@hydra.main(config_path="config", config_name="vae44_local", version_base=None) # hydra will automatically relocate the working dir.
+@hydra.main(config_path="config", config_name="vae44_wm", version_base=None) # hydra will automatically relocate the working dir.
 def main(cfg):
-    rank = 0
+    rank = int(os.environ["LOCAL_RANK"])
+    world_size = torch.cuda.device_count()
+    ddp_setup(rank, world_size)
     model, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog = load_train_objs(rank, cfg)
     TrainLoader, TestLoader = prepare_dataloader(TrainDataset, TestDataset, cfg)
     trainer = Trainer(rank, cfg, model, TrainLoader, TestLoader, Optimizer, Schedular, log, tblog)
     trainer.fit()
+    destroy_process_group()
 
 if __name__ == "__main__":
     main()

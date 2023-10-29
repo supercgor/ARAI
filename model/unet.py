@@ -68,7 +68,7 @@ class unet_onehot(nn.Module):
         for level, (in_ch, out_ch) in enumerate(zip(ds_ch[:-1], ds_ch[1:])): # [(32,64), (64,128), (128,256), ...]
             for n in range(num_res_blocks):
                 layer = TimestepEmbedSequential()
-                layer.add_module(f"res{n}", ZeroResBlock(in_ch, None, dropout = dropout, dims = self.dims, use_checkpoint = use_checkpoint, use_scale_shift_norm = use_scale_shift_norm))
+                layer.add_module(f"res{n}", ResBlock(in_ch, None, dropout = dropout, dims = self.dims, use_checkpoint = use_checkpoint, use_scale_shift_norm = use_scale_shift_norm))
                 if ds in attention_resolutions:
                     layer.add_module(f"attn{n}", AttentionBlock(in_ch, use_checkpoint = use_checkpoint, num_heads = num_heads, num_head_channels = num_head_channels, use_new_attention_order = use_new_attention_order))
                 skip_chs.append(in_ch)
@@ -78,7 +78,7 @@ class unet_onehot(nn.Module):
         
         in_ch = out_ch
         self.middle = TimestepEmbedSequential()
-        self.middle.add_module("res0", ZeroResBlock(in_ch, None, dropout, dims=self.dims, use_checkpoint=use_checkpoint, use_scale_shift_norm=use_scale_shift_norm))
+        self.middle.add_module("res0", ResBlock(in_ch, None, dropout, dims=self.dims, use_checkpoint=use_checkpoint, use_scale_shift_norm=use_scale_shift_norm))
         if ds in attention_resolutions:
             self.middle.add_module("attn", AttentionBlock(in_ch, use_checkpoint=use_checkpoint, num_heads=num_heads, num_head_channels=num_head_channels, use_new_attention_order=use_new_attention_order))
         if self.use_vaeblock:
@@ -97,7 +97,7 @@ class unet_onehot(nn.Module):
             ds //= 2
             for n in range(num_res_blocks):
                 layer = TimestepEmbedSequential()
-                layer.add_module(f"res{n}", ZeroResBlock(skip_chs.pop() + out_ch, None, dropout = dropout, out_channels = out_ch, dims = self.dims, use_checkpoint = use_checkpoint, use_scale_shift_norm = use_scale_shift_norm))
+                layer.add_module(f"res{n}", ResBlock(skip_chs.pop() + out_ch, None, dropout = dropout, out_channels = out_ch, dims = self.dims, use_checkpoint = use_checkpoint, use_scale_shift_norm = use_scale_shift_norm))
                 if ds in attention_resolutions:
                     layer.add_module(f"attn{n}", AttentionBlock(out_ch, use_checkpoint = use_checkpoint, num_heads = num_heads_upsample, num_head_channels = num_head_channels, use_new_attention_order = use_new_attention_order))
                 self.up.append(layer)
@@ -105,7 +105,7 @@ class unet_onehot(nn.Module):
                 break
             
         self.out = TimestepEmbedSequential()
-        self.out.add_module("res", ZeroResBlock(out_ch, None, dropout, dims=self.dims, use_checkpoint=use_checkpoint, use_scale_shift_norm=use_scale_shift_norm))
+        self.out.add_module("res", ResBlock(out_ch, None, dropout, dims=self.dims, use_checkpoint=use_checkpoint, use_scale_shift_norm=use_scale_shift_norm))
         self.out.add_module("conv1", conv_nd(self.dims, out_ch, out_ch, 1))
         self.out.add_module("act1", nn.ReLU(True))
         self.out.add_module("conv2", conv_nd(self.dims, out_ch, out_ch, 1))
@@ -223,7 +223,7 @@ class VAEunet(nn.Module):
         for level, (in_ch, out_ch) in enumerate(zip(ds_ch[:-1], ds_ch[1:])): # [(32,64), (64,128), (128,256), ...]
             for n in range(num_res_blocks):
                 layer = TimestepEmbedSequential()
-                layer.add_module(f"res{n}", ZeroResBlock(in_ch, None, dropout = dropout, dims = self.dims))
+                layer.add_module(f"res{n}", ResBlock(in_ch, None, dropout = dropout, dims = self.dims))
                 if ds in attention_resolutions:
                     layer.add_module(f"attn{n}", AttentionBlock(in_ch, num_heads = num_heads, num_head_channels = num_head_channels, use_new_attention_order = use_new_attention_order))
                 if ds in self.skip_mult:
@@ -258,13 +258,13 @@ class VAEunet(nn.Module):
                     cat_ch = out_ch + skip_chs.pop()
                 else:
                     cat_ch = out_ch
-                layer.add_module(f"res{n}", ZeroResBlock(cat_ch, None, dropout = dropout, out_channels = out_ch, dims = self.dims))
+                layer.add_module(f"res{n}", ResBlock(cat_ch, None, dropout = dropout, out_channels = out_ch, dims = self.dims))
                 if ds in attention_resolutions:
                     layer.add_module(f"attn{n}", AttentionBlock(out_ch, num_heads = num_heads_upsample, num_head_channels = num_head_channels, use_new_attention_order = use_new_attention_order))
                 self.up.append(layer)
                 
         self.out = TimestepEmbedSequential()
-        self.out.add_module("res", ZeroResBlock(out_ch, None, dropout, dims=self.dims, ))
+        self.out.add_module("res", ResBlock(out_ch, None, dropout, dims=self.dims, ))
         self.out.add_module("conv1", conv_nd(self.dims, out_ch, out_ch, 1))
         self.out.add_module("act1", nn.ReLU(True))
         self.out.add_module("conv2", conv_nd(self.dims, out_ch, out_ch, 1))
@@ -402,7 +402,7 @@ class VAELatEmb(nn.Module):
         for level, (in_ch, out_ch) in enumerate(zip(down_ch[:-1], down_ch[1:])): # [(32,64), (64,128), (128,256), ...]
             for n in range(self.down_blocks):
                 layer = TimestepEmbedSequential()
-                layer.add_module(f"res{n}", ZeroResBlock(in_ch, None, dropout = dropout, dims = self.dims))
+                layer.add_module(f"res{n}", ResBlock(in_ch, None, dropout = dropout, dims = self.dims))
                 self.down.append(layer)
             self.down.append(Downsample(in_ch, conv_resample, dims = self.dims, out_channels = out_ch, z_down = ds in z_down))
             ds *= 2
@@ -423,11 +423,11 @@ class VAELatEmb(nn.Module):
             ds //= 2
             for n in range(self.up_blocks):
                 layer = TimestepEmbedSequential()
-                layer.add_module(f"res{n}", ZeroResBlock(out_ch, None, dropout = dropout, out_channels = out_ch, dims = self.dims))
+                layer.add_module(f"res{n}", ResBlock(out_ch, None, dropout = dropout, out_channels = out_ch, dims = self.dims))
                 self.up.append(layer)
                 
         self.out = TimestepEmbedSequential(
-            ZeroResBlock(out_ch, None, dropout, dims=self.dims, ),
+            ResBlock(out_ch, None, dropout, dims=self.dims, ),
             conv_nd(self.dims, out_ch, out_ch, 1),
             nn.ReLU(True),
             conv_nd(self.dims, out_ch, out_ch, 1),

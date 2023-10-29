@@ -1,11 +1,11 @@
 defaults:
   - _self_
-  - model: vae_a0
+  - model: vae_v2
   - setting: test
-  - dataset: vae_local
+  - dataset: vae2_local
   - criterion: vae
 
-test_path: ${data.test_path}
+test_path: ${dataset.test_path}
 checkpoint: ${model.checkpoint}
 label: False
 save_pred: False

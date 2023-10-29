@@ -3,6 +3,7 @@ __pycache__/
 *.log
 *.out
 *.ipynb
+.DS_Store
 
 outputs/
 debug.py

@@ -12,7 +12,7 @@ import model
 import utils
 
 class Trainer():
-    def __init__(self, rank, cfg, model, TrainLoader, TestLoader, Optimizer, Schedular, log, tblog):
+    def __init__(self, rank, cfg, model, TrainLoader, TestLoader, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog):
         self.work_dir = hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir']
         self.cfg = cfg
         self.rank = rank
@@ -25,7 +25,8 @@ class Trainer():
                                                 wr = cfg.criterion.rot_weight,
                                                 wvae = cfg.criterion.vae_weight
                                                 ).to(self.device)
-        
+        self.TrainDataset = TrainDataset
+        self.TestDataset = TestDataset
         self.TrainLoader = TrainLoader
         self.TestLoader = TestLoader
         self.Optimizer = Optimizer
@@ -89,13 +90,11 @@ class Trainer():
             predsp = torch.cat([preds[...,(0,)].sigmoid(), preds[...,1:]], dim=-1)
             predsp = torch.where(predsp[...,(0,)] < 0.5, torch.zeros_like(predsp), predsp)
             
-            mup, logvarp = self.model._forward_encoder(predsp, None)
+            mup, logvarp = self.model.forward(predsp, None, encoder = True)
             vae_add = self.Criterion.wvae * self.Criterion.vaeloss(mup, logvarp)
             loss_vae = (loss_vae + vae_add)/2
             
             loss = loss_conf + loss_pos + loss_r + loss_vae
-
-                        
             self.Optimizer.zero_grad()
             
             loss.backward()
@@ -156,11 +155,7 @@ class Trainer():
             
             predsp = torch.cat([preds[...,(0,)].sigmoid(), preds[...,1:]], dim=-1)
             predsp = torch.where(predsp[...,(0,)] < 0.5, torch.zeros_like(predsp), predsp)
-            
-            mup, logvarp = self.model._forward_encoder(predsp, None)
-            vae_add = self.Criterion.wvae * self.Criterion.vaeloss(mup, logvarp)
-            loss_vae = (loss_vae + vae_add)/2
-            
+                        
             loss = loss_conf + loss_pos + loss_r + loss_vae
                         
             self.LostStat.add(loss)
@@ -215,9 +210,11 @@ def load_train_objs(rank, cfg: DictConfig):
     else:
         loaded = utils.model_load(net, cfg.model.checkpoint, True)
         log.info(f"Load parameters from {cfg.model.checkpoint}")
-            
-    TrainDataset = dataset.AFMGenDataset(cfg.dataset.train_path, transform=None)
-    TestDataset = dataset.AFMGenDataset(cfg.dataset.test_path, transform=None)
+    
+    size = cfg.model.params.in_size
+    size = [size[1],size[2],size[0]]
+    TrainDataset = dataset.ZVarAFM(cfg.dataset.train_path, box_size = size)
+    TestDataset = dataset.ZVarAFM(cfg.dataset.test_path, box_size = size)
     
     Optimizer = torch.optim.Adam(net.parameters(), lr=cfg.criterion.lr, weight_decay=cfg.criterion.weight_decay)
     
@@ -263,7 +260,7 @@ def main(cfg):
     rank = 0
     model, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog = load_train_objs(rank, cfg)
     TrainLoader, TestLoader = prepare_dataloader(TrainDataset, TestDataset, cfg)
-    trainer = Trainer(rank, cfg, model, TrainLoader, TestLoader, Optimizer, Schedular, log, tblog)
+    trainer = Trainer(rank, cfg, model, TrainLoader, TestLoader, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog)
     trainer.fit()
 
 if __name__ == "__main__":

@@ -315,7 +315,7 @@ class MixBlock(ReferenceBlock):
         x = self.op(x)
         return x
         
-class ZeroResBlock(TimestepBlock):
+class ResBlock(TimestepBlock):
     """
     A residual block that can optionally change the number of channels.
 

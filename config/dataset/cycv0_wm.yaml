@@ -1,0 +1,4 @@
+source_path: /gpfs/share/home/2000012508/Documents/data/union-water-data_train.hdf5
+target_path: /gpfs/share/home/2000012508/Documents/data/exp-middle-bulkexp-cluster-data_train.hdf5
+
+image_size: [10, 100, 100]

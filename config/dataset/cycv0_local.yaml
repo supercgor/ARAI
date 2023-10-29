@@ -1,0 +1,4 @@
+source_path: /Users/supercgor/Documents/data/union-water-data-small_train.hdf5
+target_path: /Users/supercgor/Documents/data/exp-middle-bulkexp-cluster-data_train.hdf5
+
+image_size: [10, 100, 100]

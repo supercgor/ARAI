@@ -1,0 +1,17 @@
+net: VAELatEmb_v2
+checkpoint: /Users/supercgor/Documents/data/VAEv2/vae_CP12_L0.5669.pkl
+params:
+  in_size: [4, 25, 25] 
+  in_channels: 10
+  out_size: [4, 25, 25]
+  out_channels: 10
+  model_channels: 32
+  embedding_input: 2
+  embedding_channels: 256
+  latent_channels: 128
+  num_res_blocks: [3, 3] 
+  dropout: 0
+  channel_mult: [1,2,4,8]
+  z_down: [2, 8]
+  z_up: [2, 8]
+  conv_resample: True

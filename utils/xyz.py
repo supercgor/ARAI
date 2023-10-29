@@ -31,7 +31,6 @@ def read(path: str) -> tuple[list[np.ndarray[np.float_]], list[list[str]]]:
             
     return types, molecules, charges, ids
 
-
 def write(path: str, types: list[np.ndarray[np.str_]], molecules: list[list[np.ndarray[np.float_]]], charges: list[list[np.float_]] = None, ids: list[list[int]] = None):
     out = f"{sum(map(len, molecules))}\n\n"
     if ids is None:

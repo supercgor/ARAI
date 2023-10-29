@@ -1,5 +1,5 @@
 net: VAELatEmb
-checkpoint: ~
+checkpoint: /Users/supercgor/Documents/data/00-34-23/vae_CP07_L0.6183.pkl
 params:
   in_size: ${dataset.image_size}
   in_channels: 10
@@ -7,8 +7,8 @@ params:
   out_channels: 10
   model_channels: 32
   embedding_input: 1
-  latent_channels: 32
-  num_res_blocks: [2, 2]
+  latent_channels: 128
+  num_res_blocks: [3, 3]
   dropout: 0.0
   channel_mult: [1, 2, 4, 8]
   z_down: [2, 8]

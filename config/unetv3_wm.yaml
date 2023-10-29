@@ -1,0 +1,12 @@
+defaults:
+  - _self_
+  - model: unetv3-2
+  - setting: default
+  - dataset: unetv3_wm
+  - criterion: unet
+
+test_path: ${data.test_path}
+checkpoint: ${model.checkpoint}
+label: False
+transform: False
+output: ~

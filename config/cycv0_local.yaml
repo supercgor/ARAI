@@ -1,0 +1,12 @@
+defaults:
+  - _self_
+  - model: cycv0
+  - setting: test
+  - dataset: cycv0_local
+  - criterion: unet
+
+test_path: ${data.test_path}
+checkpoint: ${model.checkpoint}
+label: False
+transform: False
+output: ~

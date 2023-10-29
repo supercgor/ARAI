@@ -8,7 +8,7 @@ from torch import nn, Tensor
 from torch import multiprocessing as mp
 
 from . import poscar
-from . import functional
+from . import library
 from typing import Iterable
 
 class Analyser(nn.Module):
@@ -172,15 +172,15 @@ class parallelAnalyser(nn.Module):
              
     @staticmethod
     def eval_one(pred: Tensor, targ: Tensor, threshold: float, cutoff: float, real_size: Tensor, sort: bool, nms: bool, split: list[float]) -> tuple[Tensor]:
-        _, pd_pos, pd_R = functional.box2orgvec(pred, functional.inverse_sigmoid(threshold), cutoff, real_size, sort, nms)
-        _, tg_pos, tg_R = functional.box2orgvec(targ, 0.5, cutoff, real_size, False, False)
+        _, pd_pos, pd_R = library.box2orgvec(pred, library.inverse_sigmoid(threshold), cutoff, real_size, sort, nms)
+        _, tg_pos, tg_R = library.box2orgvec(targ, 0.5, cutoff, real_size, False, False)
         
         cm = torch.zeros((1, len(split) - 1, 4), dtype = torch.float, device = pred.device) # C S (TP, FP, FN)
             
-        pd_match_ids, tg_match_ids = functional.argmatch(pd_pos, tg_pos, cutoff/2)
+        pd_match_ids, tg_match_ids = library.argmatch(pd_pos, tg_pos, cutoff/2)
         
-        pd_R = pd_R[pd_match_ids] # N 3 3
-        tg_R = tg_R[tg_match_ids] # N 3 3
+        pd_R = pd_R[pd_match_ids][:, (0, 1)] # N 3 3
+        tg_R = tg_R[tg_match_ids][:, (0, 1)] # N 3 3
         
         match_tg_pos = tg_pos[tg_match_ids] # N 3
         
@@ -195,8 +195,7 @@ class parallelAnalyser(nn.Module):
             cm[0, i, 0] = match_tg_mask.sum() #TP
             cm[0, i, 1] = pd_mask.sum() - match_tg_mask.sum() # FP
             cm[0, i, 2] = tg_mask.sum() - match_tg_mask.sum() # FN
-            cm[0, i, 3] = ang.mean().nan_to_num(90.0)         # ANG
-            
+            cm[0, i, 3] = ang.mean().nan_to_num(90) # ANGxw
         return cm
                 
 class metStat():
@@ -205,7 +204,7 @@ class metStat():
         Args:
             reduction (str): should be 'mean', 'sum', 'max', 'min', 'none'
         """
-        self._value = np.array([])
+        self._value = []
         if reduction == "mean":
             self._reduction = np.mean
         elif reduction == "sum":
@@ -231,25 +230,24 @@ class metStat():
             x = x.detach().cpu().numpy()
         if isinstance(x, np.ndarray) and x.size != 1:
             raise ValueError(f"Only support scalar input, but got {x}")
-        self._value = np.append(self._value, x)
+        self._value.append(x)
     
     def extend(self, xs: Iterable):
         if isinstance(xs, (metStat, list, tuple)):
-            self._value = np.append(self._value, xs._value)
+            self._value.extend(xs)
         elif isinstance(xs, np.ndarray):
             xs = xs.view(-1)
-            self._value = np.append(self._value, xs)
+            self._value.extend(xs)
         elif isinstance(xs, torch.Tensor):
             xs = xs.detach().cpu().view(-1).numpy()
-            self._value = np.append(self._value, xs)
+            self._value.extend(xs)
         elif isinstance(xs, Iterable):
-            for x in xs:
-                self._value = np.append(self._value, x)
+            self._value.extend(xs)
         else:
             raise TypeError(f"{type(xs)} is not an iterable")
     
     def reset(self):
-        self._value = np.array([])
+        self._value = []
     
     def calc(self) -> float:
         return self._reduction(self._value)
@@ -268,88 +266,11 @@ class metStat():
     
     def __format__(self, code):
         return self._reduction(self._value).__format__(code)
-    
+
     @property
     def value(self):
         return self._value
     
-class ConfusionMatrixCounter(object):
-    def __init__(self, ):
-        self.reset()
-    
-    def __call__(self, confusion_matrix: np.ndarray) -> None:
-        """
-        _summary_
-
-        Args:
-            confusion_matrix (Tensor): B C-1 S (TP, FP, FN)
-        """
-        if isinstance(confusion_matrix, Tensor):
-            if confusion_matrix.device != torch.device("cpu"):
-                confusion_matrix = confusion_matrix.detach().cpu().numpy()
-            else:
-                confusion_matrix = confusion_matrix.numpy()
-        TP, FP, FN, AR, AP, ACC, SUC = self._count(confusion_matrix)
-        self._TP.append(TP)
-        self._FP.append(FP)
-        self._FN.append(FN)
-        self._AR.append(AR)
-        self._AP.append(AP)
-        self._ACC.append(ACC)
-        self._SUC.append(SUC)
-
-    def reset(self):
-        self._TP = []
-        self._FP = []
-        self._FN = []
-        self._AR = []
-        self._AP = []
-        self._ACC = []
-        self._SUC = []
-    
-    def calc(self) -> tuple[np.ndarray]:
-        TP = np.concatenate(self._TP, axis = 0).sum(axis = 0)
-        FP = np.concatenate(self._FP, axis = 0).sum(axis = 0)
-        FN = np.concatenate(self._FN, axis = 0).sum(axis = 0)
-        AR = np.concatenate(self._AR, axis = 0).mean(axis = 0)
-        AP = np.concatenate(self._AP, axis = 0).mean(axis = 0)
-        ACC = np.concatenate(self._ACC, axis = 0).mean(axis = 0)
-        SUC = np.concatenate(self._SUC, axis = 0).mean(axis = 0)
-        return np.stack([TP, FP, FN, AR, AP, ACC, SUC], axis = -1)
-    
-    @staticmethod
-    @numba.jit(nopython=True)
-    def _count(cm: np.ndarray) -> tuple[np.ndarray]:
-        return cm[..., 0], cm[..., 1], cm[..., 2], np.nan_to_num(cm[..., 0] / (cm[..., 0] + cm[..., 2])), np.nan_to_num(cm[..., 0] / (cm[..., 0] + cm[..., 1])), np.nan_to_num(cm[..., 0] / np.sum(cm, axis=-1)), ((cm[..., 1] == 0) & (cm[...,2] == 0)).astype(np.int32)
-    
-    @property
-    def TP(self):
-        return self._TP[-1]
-    
-    @property
-    def FP(self):
-        return self._FP[-1]
-    
-    @property
-    def FN(self):
-        return self._FN[-1]
-    
-    @property
-    def AR(self):
-        return self._AR[-1]
-    
-    @property
-    def AP(self):
-        return self._AP[-1]
-    
-    @property
-    def ACC(self):
-        return self._ACC[-1]
-    
-    @property
-    def SUC(self):
-        return self._SUC[-1]
-
 class ConfusionCounter(object):
     def __init__(self,):
         self._cmc = []
@@ -361,7 +282,7 @@ class ConfusionCounter(object):
             cm = cm.numpy()
         if cm.ndim == 3:
             self._cmc.append(cm)
-        elif cm.ndim == 4:
+        elif cm.ndim >= 4:
             self._cmc.extend(cm)
         
     def calc(self):
@@ -385,15 +306,27 @@ class ConfusionCounter(object):
     
     @property
     def AR(self):
-        return np.nan_to_num(self._cmc[..., 0] / (self._cmc[..., 0] + self._cmc[..., 2]), nan = 0, posinf = 1.0).mean(axis = 0)
+        T = self._cmc[..., 0] + self._cmc[..., 2]
+        mask = (T == 0) & (self._cmc[..., 1] == 0)
+        T.clip(1, out = T)
+        T = np.where(mask, 1, self._cmc[..., 0] / T)
+        return T.mean(axis = 0)
     
     @property
     def AP(self):
-        return np.nan_to_num(self._cmc[..., 0] / (self._cmc[..., 0] + self._cmc[..., 1]), nan = 0, posinf = 1.0).mean(axis = 0)
+        P = self._cmc[..., 0] + self._cmc[..., 1]
+        mask = (P == 0) & (self._cmc[..., 2] == 0)
+        P.clip(1, out = P)
+        P = np.where(mask, 1, self._cmc[..., 0] / P)
+        return P.mean(axis = 0)
     
     @property
     def ACC(self):
-        return np.nan_to_num(self._cmc[..., 0] / np.sum(self._cmc, axis=-1), nan = 0, posinf = 1.0).mean(axis = 0)
+        A = self._cmc[..., 0] + self._cmc[..., 1] + self._cmc[..., 2]
+        mask = (A == 0)
+        A.clip(1, out = A)
+        A = np.where(mask, 1.0, self._cmc[..., 0] / A)
+        return A.mean(axis = 0)
     
     @property
     def SUC(self):

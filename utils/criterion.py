@@ -1,6 +1,6 @@
 import torch
 from torch import nn, Tensor
-from einops import rearrange
+import torch.nn.functional as F
 
 class BoxClsLoss(nn.Module):
     def __init__(self, wxy: float = 0.5, wz: float = 0.5, wcls: float = 1.0, ion_weight: tuple[float] = (0.1, 1.0, 2.0)):
@@ -34,12 +34,34 @@ class BoxClsLoss(nn.Module):
         pos_loss = self.mse(pred_boxes[mask], targ_boxes[mask]).mean(dim = 0)
         return cls_loss * self.wcls + pos_loss[0] * self.wz + pos_loss[1:].mean() * self.wxy
     
+
+class BoxClsLoss2(nn.Module):
+    def __init__(self, cls_weight, xy_weight, z_weight, rot_weight, pos_weight):
+        super().__init__()
+        self.register_buffer("pos_weight", torch.as_tensor(pos_weight))
+        self.cls_weight = cls_weight
+        self.xy_weight = xy_weight
+        self.z_weight = z_weight
+        self.rot_weight = rot_weight
+        
+    def forward(self, preds, targs):
+        # preds: B, X, Y, Z, 10 ; targs: B, X, Y, Z, 10
+        predc, predxy, predz, predrot = torch.split(preds, [1, 2, 1, 6], dim = -1)
+        targc, targxy, targz, targrot = torch.split(targs, [1, 2, 1, 6], dim = -1)
+        mask = targc[...,0] == 1
+        lossc = F.binary_cross_entropy_with_logits(predc, targc, pos_weight=self.pos_weight) * self.cls_weight
+        lossxy = F.mse_loss(predxy[mask], targxy[mask]) * self.xy_weight
+        lossz = F.mse_loss(predz[mask], targz[mask]) * self.z_weight
+        lossrot = F.mse_loss(predrot[mask], targrot[mask]) * self.rot_weight
+        #print(f"{lossc.item():.3f}, {lossxy.item():.3f}, {lossz.item():.3f}, {lossrot.item():.3f}")
+        return lossc + lossxy + lossz + lossrot
+        
 class conditionVAELoss(nn.Module):
     def __init__(self, wc = 0.4, wpos_weight = 10.0, wpos = 0.3, wr = 0.3, wvae = 1.0):
         super().__init__()
         self.cls_loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([wpos_weight]))
         self.pos_loss = nn.MSELoss()
-        self.rot_loss = nn.L1Loss()
+        self.rot_loss = nn.MSELoss()
         self.wc = wc
         self.wpos = wpos
         self.wr = wr

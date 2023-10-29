@@ -49,15 +49,15 @@ def model_load(module: nn.Module, path: str, strict = False) -> list[str]:
     param_names = list(state_dict.keys())
     pretrained_state_dict = torch.load(path, map_location = 'cpu')
     pretrained_param_names = list(pretrained_state_dict.keys())
-    match_list = []
+    mismatch_list = []
     for i, param in enumerate(pretrained_param_names):
         if i == len(param_names):
             break
         if param == param_names[i]:
-            match_list.append(param)
             state_dict[param] = pretrained_state_dict[param]
         else:
-            break
+            mismatch_list.append(param)
+            continue
     if strict:
         module.load_state_dict(state_dict)
     else:
@@ -65,4 +65,4 @@ def model_load(module: nn.Module, path: str, strict = False) -> list[str]:
             module.load_state_dict(state_dict)
         except RuntimeError:
             pass
-    return match_list
+    return mismatch_list

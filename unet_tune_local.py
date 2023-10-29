@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from omegaconf import OmegaConf, DictConfig
+from torchvision.transforms import RandomApply
 
 import dataset
 import model
@@ -166,12 +167,15 @@ def load_train_objs(rank, cfg: DictConfig):
     tblog = SummaryWriter(f"{work_dir}/runs")
     
     net = getattr(model, cfg.model.net)(**cfg.model.params)
+    cyc = getattr(model, cfg.model.cyc.name)(**cfg.model.cyc.params).eval().requires_grad_(False)
     
     net.apply_transform(inp_transform, out_transform)
+    cyc.apply_transform(lambda x: x[None, ...], lambda x: torch.nn.functional.sigmoid(x)[0, ...])
+    utils.model_load(cyc, cfg.model.cyc.checkpoint, True)
     
     log.info(f"Network parameters: {sum([p.numel() for p in net.parameters()])}")
     
-    if True: # cfg.model.checkpoint is None:
+    if False: # cfg.model.checkpoint is None:
             log.info("Start a new model")
     else:
         missing = utils.model_load(net, cfg.model.checkpoint, True)
@@ -182,7 +186,8 @@ def load_train_objs(rank, cfg: DictConfig):
                                     dataset.Cutout(),
                                     dataset.ColorJitter(),
                                     dataset.Noisy(),
-                                    dataset.Blur()
+                                    dataset.Blur(),
+                                    RandomApply([cyc]),
                                     )
         
     TrainDataset = dataset.AFMDataset_V2(cfg.dataset.train_path, useLabel=True, useZ=cfg.dataset.image_size[0], transform=transform)

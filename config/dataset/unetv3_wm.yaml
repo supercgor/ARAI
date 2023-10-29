@@ -1,0 +1,9 @@
+train_path: /gpfs/share/home/2000012508/Documents/data/union-water-data_train.hdf5
+test_path: /gpfs/share/home/2000012508/Documents/data/union-water-data_test.hdf5
+
+image_size: [10, 100, 100]
+real_size: [25.0, 25.0, 3.0]
+ion_type: ['H2O']
+
+split: [0.0, 3.0]
+nms: True

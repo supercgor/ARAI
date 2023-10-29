@@ -14,7 +14,7 @@ class Resize(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return resize(x, self.size)
 
-@torch.jit.script
+#@torch.jit.script
 def cutout(x: Tensor, N: int = 4, scale: tuple[float, float] = (0.02, 0.98), size: float = 0.02, layerwise: bool = True) -> Tensor:
     """
     Cutout augmentation. Randomly cut out a rectangle from the image. The operation is in-place.
@@ -34,29 +34,32 @@ def cutout(x: Tensor, N: int = 4, scale: tuple[float, float] = (0.02, 0.98), siz
     if not layerwise:
         D = 1
     x = x.permute(1, 2, 3, 0) # D, H, W, C
-    usearea = torch.randn(D, N, device = x.device, dtype= x.dtype).abs() * size
-    pos = torch.rand(D, N, 2, device = x.device, dtype= x.dtype)
-    sizex = torch.randn(D, N, device = x.device, dtype= x.dtype).abs() * usearea.sqrt()
-    sizey = usearea / sizex
-    size_hw = torch.stack([sizex, sizey], dim=-1).clip(*scale)
-    start_points = ((pos - size_hw / 2).clamp(0, 1) * HW).long()
-    end_points = ((pos + size_hw / 2).clamp(0, 1) * HW).long()
-    
-    if layerwise:
-        for i in range(D):
-            xi, stp, enp = x[i], start_points[i], end_points[i]
-            xmean = xi.mean()
+    try:
+        usearea = torch.randn(D, N, device = x.device, dtype= x.dtype).abs() * size
+        pos = torch.rand(D, N, 2, device = x.device, dtype= x.dtype)
+        sizex = torch.randn(D, N, device = x.device, dtype= x.dtype).abs() * usearea.sqrt()
+        sizey = usearea / sizex
+        size_hw = torch.stack([sizex, sizey], dim=-1).clip(*scale)
+        start_points = ((pos - size_hw / 2).clamp(0, 1) * HW).long()
+        end_points = ((pos + size_hw / 2).clamp(0, 1) * HW).long()
+        
+        if layerwise:
+            for i in range(D):
+                xi, stp, enp = x[i], start_points[i], end_points[i]
+                xmean = xi.mean().nan_to_num(0)
+                for j in range(N):
+                    xi[stp[j,0]:enp[j,0], stp[j,1]:enp[j,1]] = xmean
+        else:
+            xi, stp, enp = x, start_points[0], end_points[0]
+            xmean = xi.mean().nan_to_num(0)
             for j in range(N):
-                xi[stp[j,0]:enp[j,0], stp[j,1]:enp[j,1]] = xmean
-    else:
-        xi, stp, enp = x, start_points[0], end_points[0]
-        xmean = xi.mean()
-        for j in range(N):
-            xi[:, stp[j,0]:enp[j,0], stp[j,1]:enp[j,1]] = xmean
+                xi[:, stp[j,0]:enp[j,0], stp[j,1]:enp[j,1]] = xmean
+    except Exception as e:
+        print(e)
     x = x.permute(3, 0, 1, 2)
     return x
 
-@torch.jit.script
+#@torch.jit.script
 def noisy(x: Tensor, intensity: float = 0.1, noisy_mode: list[int] = (0, 1, 2), noisy_type: list[int] = (0, 1), layerwise: bool = True) -> Tensor:
     """
     Add noise to the image. The operation is in-place.

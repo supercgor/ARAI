@@ -3,6 +3,7 @@ import hydra
 import time
 
 import numpy as np
+import pandas as pd
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from omegaconf import DictConfig 
@@ -27,28 +28,23 @@ def out_transform(inp: torch.Tensor):
     return torch.cat([conf, pos, c1, c2], dim=-1)
     
 class Trainer():
-    def __init__(self, 
-                 work_dir: str,
-                 cfg: DictConfig,
-                 model: torch.nn.Module,
-                 TestLoader,
-                 log,
-                 tblog,
-                 gpu_id: int,
-                ) -> None:
-        self.work_dir = work_dir
+    def __init__(self, rank, cfg, model, Testdata, TestLoader, log, tblog):
+        self.work_dir = hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir']
         self.cfg = cfg
-        self.rank = 0
-        if torch.cuda.is_available():
-            self.device = torch.device(f"cuda:{gpu_id}")
-        else:
-            self.device = torch.device(f"cpu")    
+        self.rank = rank
+        self.device =  torch.device(f"cuda:{rank}") if torch.cuda.is_available() else torch.device(f"cpu")
         self.model = model.to(self.device)
-        self.save_paths = []
+        self.Analyser = utils.parallelAnalyser(cfg.dataset.real_size).to(self.device)
+        self.Criterion = utils.conditionVAELoss(wc = cfg.criterion.cond_weight,
+                                                wpos_weight = cfg.criterion.pos_weight,
+                                                wpos = cfg.criterion.xyz_weight,
+                                                wr = cfg.criterion.rot_weight,
+                                                wvae = cfg.criterion.vae_weight
+                                                ).to(self.device)
+        
+        self.TestData = Testdata
         self.TestLoader = TestLoader
-        self.log = log
-        self.tblog = tblog
-        self.Analyser = utils.parallelAnalyser(cfg.data.real_size, cfg.data.nms).to(self.device)
+        
         self.ConfusionCounter = utils.ConfusionRotate()
         self.LostStat = utils.metStat()
         self.LostConfidenceStat = utils.metStat()
@@ -58,43 +54,22 @@ class Trainer():
         self.GradStat = utils.metStat()
         self.RotStat = utils.metStat()
             
-        self.Criterion = utils.conditionVAELoss(wc = cfg.criterion.cond_weight,
-                                                wpos_weight = cfg.criterion.pos_weight,
-                                                wpos = cfg.criterion.xyz_weight,
-                                                wr = cfg.criterion.rot_weight,
-                                                wvae = cfg.criterion.vae_weight
-                                                ).to(self.device)
-        
+        self.log = log
+        self.tblog = tblog
+        self.save_paths = []
         self.best = np.inf
         
     def fit(self):
         epoch_start_time = time.time()
         
         if False:
-            loss, cms, rot = self.test_one_epoch(0, log_every = self.cfg.setting.log_every)
-        
-            logstr = f"\n============= Summary Test | Epoch {0:2d} ================\nloss: {loss[0]:.2e} | used time: {(time.time() - epoch_start_time)/60:4.1f} mins | 'Model not saved' "
-            if self.cfg.label:
-                logstr += f"\n No label provided"
-            else:
-                logstr += f"\n=================   Element - 'H20'   =================\n(Overall)  AP: {cms.AP[0].mean():.2f} | AR: {cms.AR[0].mean():.2f} | ACC: {cms.ACC[0].mean():.2f} | SUC: {cms.SUC[0].mean():.2f} | Mmean: {rot:.2e}"
-                logstr += f"\n({4:.1f}-{8:.1f}A) AP: {cms.AP[0,0]:.2f} | AR: {cms.AR[0,0]:.2f} | ACC: {cms.ACC[0,0]:.2f} | SUC: {cms.SUC[0,0]:.2f}\nTP: {cms.TP[0,0]:10.0f} | FP: {cms.FP[0,0]:10.0f} | FN: {cms.FN[0,0]:10.0f}"
-                
+            self.test_one_epoch(0)
         else:
-            self.pred_one_epoch(0)
-            
-        # _, tg_pos, tg_R = utils.functional.box2orgvec(targs.detach().cpu()[0].permute(1,2,0,3), 0.5, 1.0, (25.0,25.0,4.0), False, False)
-        # _, pd_pos, pd_R = utils.functional.box2orgvec(preds.detach().cpu()[0].permute(1,2,0,3), 0.0, 2.0, (25.0,25.0,4.0), True, True)
-        # tg_waters = utils.functional.makewater(tg_pos, tg_R)
-        # pd_waters = utils.functional.makewater(pd_pos, pd_R)
-        # tg_types = np.array([["O", "H", "H"]], dtype=np.str_).repeat(len(tg_waters), axis=0)
-        # pd_types = np.array([["O", "H", "H"]], dtype=np.str_).repeat(len(pd_waters), axis=0)
-        # utils.xyz.write(f"{filename[0]}.xyz", tg_types, tg_waters)
-        # utils.xyz.write(f"{filename[0]}_pred.xyz", pd_types, pd_waters)
-        
-    
+            self.pred2_one_epoch(0)
+       
     @torch.no_grad()
     def test_one_epoch(self, epoch, log_every: int = 25) -> tuple[torch.Tensor]:
+        all_data = pd.DataFrame()
         self.model.eval()
         self.LostStat.reset()
         self.LostConfidenceStat.reset()
@@ -103,11 +78,11 @@ class Trainer():
         self.LostVAEStat.reset()
         self.ConfusionCounter.reset()
         self.RotStat.reset()
-        for i, (filenames, preds, targs, embs) in enumerate(self.TestLoader):
-            preds = preds.to(self.device)
+        for i, (filenames, inps, targs, embs) in enumerate(self.TestLoader):
+            inps = inps.to(self.device)
             targs = targs.to(self.device)
             embs = embs.to(self.device)
-            preds, mu, logvar = self.model(preds, embs)
+            preds, mu, logvar = self.model(inps, embs)
             loss_wc, loss_pos, loss_r, loss_vae = self.Criterion(preds, targs, mu, logvar)
             loss = loss_wc + loss_pos + loss_r + loss_vae
             self.LostStat.add(loss)
@@ -115,6 +90,21 @@ class Trainer():
             self.LostPositionStat.add(loss_pos)
             self.LostRotationStat.add(loss_r)
             self.LostVAEStat.add(loss_vae)
+            feats = torch.cat([mu, logvar], dim=-1).flatten(1).detach().cpu().numpy()
+            names = []
+            for i in range(len(filenames)):
+                fn = filenames[i]
+                fn = fn.split("_")
+                name = ""
+                if "d" in fn:
+                    name += f"d,{fn[3]},{fn[-1]}"
+                else:
+                    name += f"h,{fn[2]},{fn[-1]}"
+                names.append(name)
+            print(names)
+            df_batch_predictions = pd.DataFrame(feats, index=names)
+            
+            all_data = pd.concat([all_data, df_batch_predictions])
             
             CMS = self.Analyser(preds, targs)
             self.ConfusionCounter.add(CMS[...,:3])
@@ -126,7 +116,8 @@ class Trainer():
                 self.tblog.add_scalar("Test/LossPos", loss_pos, epoch * len(self.TestLoader) + i)
                 self.tblog.add_scalar("Test/LossRot", loss_r, epoch * len(self.TestLoader) + i)
                 self.tblog.add_scalar("Test/LossVAE", loss_vae, epoch * len(self.TestLoader) + i)
-                
+            
+        all_data.to_csv('all_output.csv')
         losses = [self.LostStat.calc(),self.LostConfidenceStat.calc(), self.LostPositionStat.calc(), self.LostRotationStat.calc(), self.LostVAEStat.calc()]
         cms = self.ConfusionCounter.calc()
         rot = self.RotStat.calc()
@@ -140,13 +131,13 @@ class Trainer():
             inps = inps.to(self.device)
             embs = embs.to(self.device)
             
-            out = [inps.clone()]
+            out = [inps]
             preds = inps
             for j in range(self.cfg.pred_loop):
                 preds, mu, logvar = self.model(preds, embs)
-                preds = preds[..., :4, :]
-                preds = torch.stack([utils.functional.box2box(pred, real_size=(25.0, 25.0, 4.0), threshold=0.0, nms=True, sort=True, cutoff=2.0) for pred in preds], dim = 0)
-                out.insert(0, preds.clone())
+                preds = torch.stack([utils.library.box2box(pred, real_size=(25.0, 25.0, 4.0), threshold=0.0, nms=True, sort=True, cutoff=2.0) for pred in preds], dim = 0)
+                #out.insert(0, preds)
+                out.append(preds)
                             
             preds = torch.cat(out, dim=3)# B X Y Z*L 10
             
@@ -154,8 +145,9 @@ class Trainer():
                 pred = preds[b]
                 filename = filenames[b]
                 pred = pred.detach().cpu()
-                conf, pos, r = utils.functional.box2orgvec(pred, 0.0, 2.0, (25.0, 25.0, 4.0 * (self.cfg.pred_loop+1)), True, True)
-                pred = utils.functional.makewater(pos, r)
+                conf, pos, r = utils.library.box2orgvec(pred, 0.0, 2.0, (25.0, 25.0, 4.0 * (self.cfg.pred_loop+1)), True, True)
+                pred = utils.library.encodeWater(np.concatenate([pos, r], axis = -1))
+                # pred = utils.library.makewater(pos, r)
                 utils.xyz.write(f"{self.work_dir}/{filename}.xyz", np.array([["O", "H", "H"]], dtype=np.str_).repeat(len(pred), axis=0), pred)
                 # conf, pos, r = utils.functional.box2orgvec(targs[b].detach().cpu(), 0.0, 2.0, (25.0, 25.0, 8.0), False, False)
                 # targ = utils.functional.makewater(pos, r)
@@ -167,6 +159,33 @@ class Trainer():
             if self.rank == 0 and i % log_every == 0:
                 self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TestLoader):5d}")
             
+    @torch.no_grad()
+    def pred2_one_epoch(self, epoch, log_every: int = 25) -> tuple[torch.Tensor]:
+        self.model.eval()
+        for i in range(len(self.TestData)):
+            preds = []
+            for j, zinp in enumerate(range(2, 16, 4)):
+                filename, inp, _, emb = self.TestData.get(i, zinp)
+                if j == 0:
+                    preds.append(inp)
+                else:
+                    inp = pred
+                inp = inp.to(self.device)
+                emb = emb.to(self.device)
+                pred, mu, nu = self.model(inp[None,...], emb[None,...])
+                pred = utils.library.box2box(pred[0], real_size=(25.0, 25.0, 4.0), threshold=0.0, nms=True, sort=True, cutoff=2.0)
+                preds.append(pred)
+                            
+            preds = torch.cat(preds, dim=-2)# B X Y Z*L 10
+
+            preds = preds.detach().cpu()
+            conf, pos, r = utils.library.box2orgvec(preds, 0.0, 2.0, (25.0, 25.0, 4.0 * (j + 2)), True, True)
+            r = r.view(-1, 9)[:, :6]
+            pred = utils.library.encodeWater(np.concatenate([pos, r], axis = -1)).reshape(-1, 3, 3)
+            utils.xyz.write(f"{self.work_dir}/{filename}.xyz", np.array([["O", "H", "H"]], dtype=np.str_).repeat(len(pred), axis=0), pred)
+            
+            if self.rank == 0 and i % log_every == 0:
+                self.log.info(f"Epoch {epoch:2d} | Iter {i:5d}/{len(self.TestLoader):5d}")
             
                 
 def load_train_objs(rank, cfg: DictConfig):
@@ -188,7 +207,8 @@ def load_train_objs(rank, cfg: DictConfig):
         loaded = utils.model_load(net, cfg.model.checkpoint, True)
         log.info(f"Load parameters from {cfg.model.checkpoint}")
             
-    TestDataset = dataset.AFMGen8ADataset(cfg.data.test_path, transform=None)
+    #TestDataset = dataset.AFMGenDataset(cfg.dataset.test_path, transform=None)
+    TestDataset = dataset.ZVarAFM(cfg.dataset.test_path, (25, 25, 4))
     
     return net, TestDataset, log, tblog
 
@@ -203,19 +223,12 @@ def prepare_dataloader(test_data, cfg: DictConfig):
     return TestLoader
 
 
-@hydra.main(config_path="conf", config_name="4a8a", version_base=None) # hydra will automatically relocate the working dir.
+@hydra.main(config_path="config", config_name="vae44_local", version_base=None) # hydra will automatically relocate the working dir.
 def main(cfg):
     rank = 0
     model, TestDataset, log, tblog = load_train_objs(rank, cfg)
     TestLoader = prepare_dataloader(TestDataset, cfg)
-    trainer = Trainer(hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir'],
-                      cfg,
-                      model,
-                      TestLoader,
-                      log,
-                      tblog,
-                      rank,
-                      )
+    trainer = Trainer(rank, cfg, model, TestDataset, TestLoader, log, tblog)
     trainer.fit()
 
 if __name__ == "__main__":

@@ -95,6 +95,12 @@ def argmatch(pred: torch.Tensor, targ: torch.Tensor, cutoff: float) -> tuple[tor
         
         return dis[...,0], dis[...,1]
 
+def group_as_water(pos_o, pos_h):
+    # N, 3 2N, 3 -> N, 9
+    dis = torch.cdist(pos_o, pos_h)
+    dis = torch.topk(dis, 2, dim = 1, largest = False).indices
+    return torch.cat([pos_o,pos_h[dis].view(-1, 6)], dim = -1)
+
 def box2orgvec(box: torch.Tensor, threshold: float, cutoff: float, real_size: torch.Tensor, sort: bool, nms: bool) -> tuple[torch.Tensor]:
     """
     Convert the prediction/target to the original vector, including the confidence sequence, position sequence, and rotation matrix sequence
@@ -174,5 +180,51 @@ def makewater(pos: np.ndarray, rot: np.ndarray):
     
     # print( np.einsum("ij,Njk->Nik", water, rot) )
     return np.einsum("ij,Njk->Nik", water, rot) + pos[:, None, :]
+
+@torch.jit.script
+def __decode_th(positions):
+    positions = positions.reshape(-1, 9)
+    o, u, v = positions[...,0:3], positions[...,3:6], positions[...,6:]
+    u, v = u + v - 2 * o, u - v
+    u = u / torch.norm(u, dim=-1, keepdim=True)
+    v = v / torch.norm(v, dim=-1, keepdim=True)
+    v = torch.where(v[..., 1].unsqueeze(-1) >= 0, v, -v)
+    v = torch.where(v[..., 0].unsqueeze(-1) >= 0, v, -v)
+    return torch.cat([o, u, v], dim=-1)
     
+#@nb.njit(fastmath=True, cache=True)
+def __decode_np(positions:np.ndarray):
+    positions = positions.reshape(-1, 9)
+    o, u, v = positions[...,0:3], positions[...,3:6], positions[...,6:]
+    u, v = u + v - 2 * o, u - v
+    u = u / np.expand_dims(((u**2).sum(axis=-1)**0.5), -1)
+    v = v / np.expand_dims(((v**2).sum(axis=-1)**0.5), -1)
+    v = np.where(v[..., 1][...,None] >= 0, v, -v)
+    v = np.where(v[..., 0][...,None] >= 0, v, -v)
+    return np.concatenate((o, u, v), axis=-1)
+
+@torch.jit.script
+def __encode_th(emb):
+    o, u, v = emb[...,0:3], emb[...,3:6], emb[...,6:]
+    h1 = (0.612562225 * u + 0.790422368 * v) * 0.9584 + o
+    h2 = (0.612562225 * u - 0.790422368 * v) * 0.9584 + o
+    return torch.cat([o, h1, h2], dim=-1)
+
+@nb.njit(fastmath=True,parallel=True, cache=True)
+def __encode_np(emb):
+    o, u, v = emb[...,0:3], emb[...,3:6], emb[...,6:]
+    h1 = (0.612562225 * u + 0.790422368 * v) * 0.9584 + o
+    h2 = (0.612562225 * u - 0.790422368 * v) * 0.9584 + o
+    return np.concatenate((o, h1, h2), axis=-1)
     
+def decodeWater(positions):
+    if isinstance(positions, torch.Tensor):
+        return __decode_th(positions)
+    else:
+        return __decode_np(positions)
+
+def encodeWater(emb):
+    if isinstance(emb, torch.Tensor):
+        return __encode_th(emb)
+    else:
+        return __encode_np(emb)
