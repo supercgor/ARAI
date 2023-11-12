@@ -30,10 +30,12 @@ class ZVarAFM(Dataset):
         file_name = self._keys[index]
         hfile = h5py.File(self._path, 'r')
         data = hfile[file_name]
-        water = data['pos'][()]
+        water = data['pos'][()].reshape(-1, 3, 3)
         temp = data.attrs['temp'] / 270
-        Z  =data['pos'].attrs['size'][2] # 16
-        real_size = [*data['pos'].attrs['size']]
+        Z = data.attrs['real_size'][2]
+        real_size = [*data.attrs['real_size']]
+        #Z  =data['pos'].attrs['size'][2] # 16
+        #real_size = [*data['pos'].attrs['size']]
         real_size[-1] = self._layer_thickness
         if zinp is None:
             zinp = np.random.uniform(self._layer_start, Z - 2 * self._layer_thickness)
@@ -44,7 +46,7 @@ class ZVarAFM(Dataset):
         inppos = water - [0, 0, zinp]
         inppos = inppos.reshape(-1, 9)
         inppos = inppos[(inppos[:,2] >= 0) & (inppos[:,2] < self._layer_thickness)]
-        outpos = water - [0, 0, zout]
+        outpos = water - [0,    0, zout]
         outpos = outpos.reshape(-1, 9)
         outpos = outpos[(outpos[:,2] >= 0) & (outpos[:,2] < self._layer_thickness)]
         

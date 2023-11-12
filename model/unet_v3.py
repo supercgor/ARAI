@@ -9,7 +9,8 @@ class unet_water(nn.Module):
                  in_size: tuple[int] = (10, 100, 100), 
                  in_channels: int = 1,
                  out_size: tuple[int] = (3, 25, 25),
-                 out_channels: int = 10, 
+                 out_channels: tuple[int] | int = 10, 
+                 out_conv_blocks = 3,
                  model_channels: int = 32, 
                  embedding_input: int = 1, # 0 for bulk water # 1 for cluster water
                  embedding_channels: int = 128,
@@ -113,21 +114,24 @@ class unet_water(nn.Module):
             if out_mult == ds:
                 break
         
-        self.out = TimestepEmbedSequential()
-        if (out_size != up_size[-1]).all():
-            self.out.add_module("interp",F.interpolate(size = out_size, mode = 'nearest'))
-            self.out.add_module("res", ResBlock(out_ch, None, dropout = dropout, dims = self.dims))
-        layer = nn.Sequential(
-            conv_nd(self.dims, out_ch, out_ch, 1),
-            nn.LeakyReLU(True),
-            conv_nd(self.dims, out_ch, out_ch, 1),
-            nn.LeakyReLU(True),
-            conv_nd(self.dims, out_ch, out_ch, 1),
-            nn.LeakyReLU(True),
-            conv_nd(self.dims, out_ch, out_channels, 1),
-        )
-        self.out.add_module("reg", layer)
+        if (out_size == up_size[-1]).all():
+            self.resample = nn.Identity()
+        else:
+            self.resample = TimestepEmbedSequential(
+                avg_adt_pool_nd(self.dims, list(out_size)),
+                ResBlock(out_ch, None, dropout = dropout, dims = self.dims)
+            )
         
+        self.out = TimestepEmbedSequential()
+        if isinstance(out_channels, int):
+            out_channels = [out_channels]
+        for i, ch in enumerate(out_channels):
+            layer = TimestepEmbedSequential()
+            for j in range(out_conv_blocks):
+                layer.add_module(f"conv{j}", conv_nd(self.dims, out_ch, out_ch, 1))
+                layer.add_module(f"act{j}", nn.LeakyReLU())
+            layer.add_module(f"conv{j+1}", conv_nd(self.dims, out_ch, ch, 1, bias = False))
+            self.out.add_module(f"out{i}", layer)        
 
     def forward(self, x: Tensor, emb: Tensor = None) -> Tensor:
         if self._input_transform is not None:
@@ -159,7 +163,13 @@ class unet_water(nn.Module):
                 x = torch.cat([x, y], dim=1)
                 x = module(x, emb)
         
-        x = self.out(x)
+        x = self.resample(x)
+        
+        xs = []
+        
+        for i, module in enumerate(self.out):
+            xs.append(module(x))
+        x = torch.cat(xs, dim=1)
         
         if self._output_transform is not None:
             x = self._output_transform(x)

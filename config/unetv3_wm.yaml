@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - model: unetv3-2
+  - model: unetv4
   - setting: default
   - dataset: unetv3_wm
   - criterion: unet

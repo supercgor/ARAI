@@ -49,7 +49,8 @@ def box2vec(box_cls: torch.Tensor, box_off: torch.Tensor, *args, threshold: floa
     mask = torch.nonzero(box_cls > threshold)
     tupmask = mask.T
     box_cls = box_cls[tupmask[0], tupmask[1], tupmask[2]]
-    box_off = (box_off[tupmask[0], tupmask[1], tupmask[2]] + mask) / torch.as_tensor(box_size, dtype = box_off.dtype, device = box_off.device)
+    box_off = box_off[tupmask[0], tupmask[1], tupmask[2]] + mask
+    box_off = box_off / torch.as_tensor(box_size, dtype = box_off.dtype, device = box_off.device)
     args = [arg[tupmask[0], tupmask[1], tupmask[2]] for arg in args]
     return box_cls, box_off, *args
 
@@ -63,7 +64,7 @@ def masknms(pos: torch.Tensor, cutoff: float) -> torch.Tensor:
     Returns:
         Tensor: N 3
     """
-    DIS = torch.cdist(pos, pos)
+    DIS = torch.cdist(pos[:,:3], pos[:,:3])
     DIS = DIS < cutoff
     DIS = (torch.triu(DIS, diagonal= 1)).float()
     args = torch.ones(pos.shape[0], dtype = torch.bool, device = pos.device)

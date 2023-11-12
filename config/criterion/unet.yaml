@@ -3,8 +3,8 @@ weight_decay: 5.0e-4
 clip_grad: 3.0
 pos_weight: 10
 cond_weight: 1.0
-xy_weight: 50.0
-z_weight: 20.0
+xy_weight: 1.0
+z_weight: 1.0
 rot_weight: 0.4
 
 schedular:

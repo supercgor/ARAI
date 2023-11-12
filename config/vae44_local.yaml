@@ -1,8 +1,8 @@
 defaults:
   - _self_
-  - model: vae_v2
+  - model: vae_v3
   - setting: test
-  - dataset: vae2_local
+  - dataset: vae_local
   - criterion: vae
 
 test_path: ${dataset.test_path}

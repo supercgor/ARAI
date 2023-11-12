@@ -201,6 +201,21 @@ class PixelShift(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:  # shape (B ,C, X, Y)
         return pixelshift(x, self.max_shift, self.fill, self.ref, self.layerwise)
+
+
+class labelZnoise(nn.Module):
+    def __init__(self, sigma = 0.1):
+        super().__init__()
+        self._sigma = sigma
+        
+    def forward(self, x):
+        # x: N * 9
+        N, _ = x.shape
+        noise = torch.zeros_like(x)
+        noise[:, 2].normal_(0, self._sigma)
+        noise[:, (5,8)] = noise[:, (2,)]
+        x = x + noise
+        return x
     
 # class domainTransfer(nn.Module):
 #     def __init__(self, module, offset = 0.0):

@@ -8,19 +8,40 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from omegaconf import OmegaConf, DictConfig
-from torchvision.transforms import RandomApply
+from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, get_rank, destroy_process_group, is_initialized
 
 import dataset
 import model
 import utils
 
+user = os.environ.get('USER') == "supercgor"
+config_name = "unetv3_local" if user else "unetv3_wm"
+
+
+def ddp_setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    if torch.cuda.device_count() > 1:
+        init_process_group("nccl", rank=rank, world_size=world_size)
+        torch.cuda.set_device(rank)
+    else:
+        pass
+
 class Trainer():
     def __init__(self, rank, cfg, model, TrainLoader, TestLoader, Optimizer, Schedular, log, tblog):
         self.work_dir = hydra.core.hydra_config.HydraConfig.get()['runtime']['output_dir']
         self.cfg = cfg
-        self.rank = 0
-        self.gpu_id = rank
+        if is_initialized():
+            self.rank = get_rank()
+        else:
+            self.rank = 0
+        self.gpu_id = torch.device(f"cuda:{rank}" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.gpu_id)
+        if is_initialized():
+            DDP(self.model, device_ids=[self.gpu_id]) 
+                   
         self.TrainLoader = TrainLoader
         self.TestLoader = TestLoader
         self.Optimizer = Optimizer
@@ -74,11 +95,10 @@ class Trainer():
         self.GradStat.reset()
         self.RotStat.reset()
         self.ConfusionCounter.reset()
-        for i, (filenames, inps, embs, targs, labels) in enumerate(self.TrainLoader):
+        for i, (filenames, inps, targs, labels) in enumerate(self.TrainLoader):
             inps = inps.to(self.gpu_id, non_blocking = True)
-            embs = embs.to(self.gpu_id, non_blocking = True)
             targs = targs.to(self.gpu_id, non_blocking = True)
-            preds = self.model(inps, embs)
+            preds = self.model(inps)
             loss= self.Criterion(preds, targs)
             
             self.Optimizer.zero_grad()
@@ -112,11 +132,10 @@ class Trainer():
         self.GradStat.reset()
         self.RotStat.reset()
         self.ConfusionCounter.reset()
-        for i, (filenames, inps, embs, targs, labels) in enumerate(self.TestLoader):
+        for i, (filenames, inps, targs, labels) in enumerate(self.TestLoader):
             inps = inps.to(self.gpu_id, non_blocking = True)
-            embs = embs.to(self.gpu_id, non_blocking = True)
             targs = targs.to(self.gpu_id, non_blocking = True)
-            preds = self.model(inps, embs)
+            preds = self.model(inps)
             loss= self.Criterion(preds, targs)
             
             self.LostStat.add(loss)
@@ -154,7 +173,7 @@ def out_transform(inp: torch.Tensor):
     # B C Z X Y -> B X Y Z C
     inp = inp.permute(0, 3, 4, 2, 1)
     conf, pos, rotx, roty = torch.split(inp, [1, 3, 3, 3], dim = -1)
-    pos = pos.sigmoid() * 1.2 - 0.1
+    pos = pos.sigmoid()
     c1 = rotx / torch.norm(rotx, dim=-1, keepdim=True)    
     c2 = roty - (c1 * roty).sum(-1, keepdim=True) * c1
     c2 = c2 / torch.norm(c2, dim=-1, keepdim=True)
@@ -167,15 +186,12 @@ def load_train_objs(rank, cfg: DictConfig):
     tblog = SummaryWriter(f"{work_dir}/runs")
     
     net = getattr(model, cfg.model.net)(**cfg.model.params)
-    cyc = getattr(model, cfg.model.cyc.name)(**cfg.model.cyc.params).eval().requires_grad_(False)
     
     net.apply_transform(inp_transform, out_transform)
-    cyc.apply_transform(lambda x: x[None, ...], lambda x: torch.nn.functional.sigmoid(x)[0, ...])
-    utils.model_load(cyc, cfg.model.cyc.checkpoint, True)
     
     log.info(f"Network parameters: {sum([p.numel() for p in net.parameters()])}")
     
-    if False: # cfg.model.checkpoint is None:
+    if True: # cfg.model.checkpoint is None:
             log.info("Start a new model")
     else:
         missing = utils.model_load(net, cfg.model.checkpoint, True)
@@ -186,12 +202,14 @@ def load_train_objs(rank, cfg: DictConfig):
                                     dataset.Cutout(),
                                     dataset.ColorJitter(),
                                     dataset.Noisy(),
-                                    dataset.Blur(),
-                                    RandomApply([cyc]),
+                                    dataset.Blur()
                                     )
-        
-    TrainDataset = dataset.AFMDataset_V2(cfg.dataset.train_path, useLabel=True, useZ=cfg.dataset.image_size[0], transform=transform)
-    TestDataset = dataset.AFMDataset_V2(cfg.dataset.test_path, useLabel=True, useZ=cfg.dataset.image_size[0], transform=transform)
+    
+    out_size = cfg.model.params.out_size
+    out_size = (out_size[1], out_size[2], out_size[0])
+    
+    TrainDataset = dataset.AFMDataset_V2(cfg.dataset.train_path, useLabel=True, useEmb=False, useZ=cfg.dataset.image_size[0], transform=[transform, dataset.labelZnoise()], key_filter=key_filter, label_size=out_size)
+    TestDataset = dataset.AFMDataset_V2(cfg.dataset.test_path, useLabel=True, useEmb=False, useZ=cfg.dataset.image_size[0], transform=[transform, dataset.labelZnoise()], key_filter=key_filter, label_size=out_size)
     
     Optimizer = torch.optim.AdamW(net.parameters(), 
                                     lr=cfg.criterion.lr, 
@@ -203,31 +221,65 @@ def load_train_objs(rank, cfg: DictConfig):
     return net, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog
 
 def prepare_dataloader(train_data, test_data, cfg: DictConfig):
-    TrainLoader = torch.utils.data.DataLoader(train_data, 
-                                              batch_size=cfg.setting.batch_size, 
-                                              shuffle=True, 
-                                              num_workers=cfg.setting.num_workers, 
-                                              pin_memory=cfg.setting.pin_memory,
-                                              )
-        
-    TestLoader = torch.utils.data.DataLoader(test_data,
-                                             batch_size=cfg.setting.batch_size,
-                                             shuffle=True,
-                                             num_workers=cfg.setting.num_workers,
-                                             pin_memory=cfg.setting.pin_memory,
-                                             )
+    if is_initialized():
+        TrainLoader = torch.utils.data.DataLoader(train_data, 
+                                                batch_size=cfg.setting.batch_size, 
+                                                shuffle=False, 
+                                                num_workers=cfg.setting.num_workers, 
+                                                pin_memory=cfg.setting.pin_memory,
+                                                sampler=DistributedSampler(train_data),
+                                                )
+            
+        TestLoader = torch.utils.data.DataLoader(test_data,
+                                                batch_size=cfg.setting.batch_size,
+                                                shuffle=False,
+                                                num_workers=cfg.setting.num_workers,
+                                                pin_memory=cfg.setting.pin_memory,
+                                                sampler=DistributedSampler(test_data),
+                                                )
+    else:
+        TrainLoader = torch.utils.data.DataLoader(train_data, 
+                                                batch_size=cfg.setting.batch_size, 
+                                                shuffle=True, 
+                                                num_workers=cfg.setting.num_workers, 
+                                                pin_memory=cfg.setting.pin_memory,
+                                                )
+            
+        TestLoader = torch.utils.data.DataLoader(test_data,
+                                                batch_size=cfg.setting.batch_size,
+                                                shuffle=True,
+                                                num_workers=cfg.setting.num_workers,
+                                                pin_memory=cfg.setting.pin_memory,
+                                                )
     
     return TrainLoader, TestLoader
 
+def key_filter(key):
+    import re
+    return True
+    #return True if "HDA" in key or "ss" in key else False
+    #return re.match(r"T\d{1,3}_\d{1,5}", key) is not None or "icehup" in key
 
-@hydra.main(config_path="config", config_name="unetv3_local", version_base=None) # hydra will automatically relocate the working dir.
+@hydra.main(config_path="config", config_name= config_name, version_base=None) # hydra will automatically relocate the working dir.
 def main(cfg):
-    rank = "cuda" if torch.cuda.is_available() else "cpu"
+    if user:
+        rank = 0
+    else:
+        if "LOCAL_RANK" in os.environ:
+            rank = int(os.environ["LOCAL_RANK"])
+        else:
+            rank = 0
+        world_size = torch.cuda.device_count()
+        ddp_setup(rank, world_size)
+    
     model, TrainDataset, TestDataset, Optimizer, Schedular, log, tblog = load_train_objs(rank, cfg)
     TrainLoader, TestLoader = prepare_dataloader(TrainDataset, TestDataset, cfg)
     trainer = Trainer(rank, cfg, model, TrainLoader, TestLoader, Optimizer, Schedular, log, tblog)
     trainer.fit()
+    
+    if is_initialized():
+        destroy_process_group()
 
-if __name__ == "__main__":
+if __name__ == "__main__":        
     main()
     

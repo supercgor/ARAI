@@ -1,3 +1,3 @@
-from .dataset import AFMDataset, AFMGenDataset, AFMGen8ADataset, AFMDataset_V2
+from .dataset import AFMDataset, AFMDataset_V2, Point_Grid_Dataset_hdf
 from .zvar_dts import ZVarAFM
-from .transform import (PixelShift, Cutout, Noisy, ColorJitter, Blur, Resize)
+from .transform import (PixelShift, Cutout, Noisy, ColorJitter, Blur, Resize, labelZnoise)
