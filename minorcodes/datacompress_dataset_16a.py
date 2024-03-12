@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 import tqdm
 import torch
-from utils import library, xyz
+from utils import lib, xyz
 
 def collate_fn(batch):
     batch = zip(*batch)
@@ -45,8 +45,8 @@ if __name__ == '__main__':
     afm_dirnames = [i for i in afm_dirnames if not i.startswith('.') and i[:2] != '._' and 'txt' not in i]
     afm_dirnames.sort()
     print(afm_dirnames)
-    print("Enter the ratio of train/test (e.g. '0.85,0.15')")
-    inp = "0.85,0.15".split(",")
+    print("Enter the ratio of train/test (e.g. '0.8,0.2')")
+    inp = "0.8,0.2".split(",")
     inp = [float(i) for i in inp]
     inp = [i / sum(inp) for i in inp]
     test_num = int(len(afm_dirnames) * inp[1])

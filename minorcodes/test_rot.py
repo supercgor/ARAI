@@ -5,7 +5,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import torch
 from utils import xyz
-from utils.library import decodeWater, encodeWater
+from utils.lib import encodewater, decodewater
 
 path = "/Users/supercgor/Documents/data/ice_8_4A/hup/t160/ice_basal_T160_1000000_0_0_0_8A.xyz"
 
@@ -15,10 +15,10 @@ types, molecules, _, _ = xyz.read(path)
 import timeit
 
 molecules = np.array(molecules)
-print("torch", timeit.timeit(lambda: decodeWater(torch.as_tensor(molecules)), number=1))
-print("numpy", timeit.timeit(lambda: decodeWater(molecules), number=1))
-rot = decodeWater(np.array(molecules))
-make = encodeWater(rot)
+print("torch", timeit.timeit(lambda: encodewater(torch.as_tensor(molecules)), number=1))
+print("numpy", timeit.timeit(lambda: encodewater(molecules), number=1))
+rot = encodewater(np.array(molecules))
+make = decodewater(rot)
 print(make)
 
 import numpy as np

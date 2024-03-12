@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import Dataset
 from typing import Callable
 
-from utils.library import decodeWater
+from utils.lib import encodewater
 
 class ZVarAFM(Dataset):
     def __init__(self, path: str, box_size: list[str], layer_thickness = 4.0, layer_start = -2.0, mode="random", zinp = 0, transform: Callable[[torch.Tensor], torch.Tensor] = None):
@@ -50,8 +50,8 @@ class ZVarAFM(Dataset):
         outpos = outpos.reshape(-1, 9)
         outpos = outpos[(outpos[:,2] >= 0) & (outpos[:,2] < self._layer_thickness)]
         
-        inppos = decodeWater(inppos) # N * 9
-        outpos = decodeWater(outpos) # M * 9
+        inppos = encodewater(inppos) # N * 9
+        outpos = encodewater(outpos) # M * 9
         
         inppos[:,:3] = inppos[:,:3] * self._box_size / real_size
         outpos[:,:3] = outpos[:,:3] * self._box_size / real_size

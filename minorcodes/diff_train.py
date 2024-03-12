@@ -3,7 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import h5py
 from model import unet_water
 from model.diff import GaussianDiffusion
-from utils import library, model_save
+from utils import lib, model_save
 import tqdm
 import numpy as np
 import math
@@ -37,7 +37,7 @@ class AFMDataset(Dataset):
 
         water = data['pos'][()]
         water = torch.as_tensor(water, dtype=torch.float)
-        water = library.decodeWater(water)
+        water = lib.encodewater(water)
         water[:,:3] /= torch.tensor([25.0, 25.0, 16.0])
         water[:,:3].clamp_max_(1 - 1E-7).clamp_min_(0)
         waterind = torch.floor(water[:,:3] * self._label_size).long()

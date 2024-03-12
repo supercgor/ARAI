@@ -113,9 +113,9 @@ These codes might help you to install the environment for this project.
     conda create -n afm python=3.10
     conda activate afm
     conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y
-    conda install jupyter matplotlib numpy numba tensorboard tqdm -y
+    conda install jupyter matplotlib numpy numba tensorboard tqdm opencv -y
     conda install -c conda-forge hydra-core h5py einops -y
-    pip3 install opencv-python
+    pip3 install ovito
 
 ```
 
@@ -128,7 +128,7 @@ Before you start training, you have to edit the `conf/config.yaml` and prepare t
 
 Or you can use `compress_dataset.py` to generate the dataset.
 
-```sh
+```shu
 python3 compress_dataset.py [path_to_dataset] --label [True/False] --split [True/False]
 ```
 

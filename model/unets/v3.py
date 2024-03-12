@@ -1,7 +1,7 @@
 import torch
 from torch import nn, Tensor
 
-from .op import *
+from ..op import *
 
 
 class unet_water(nn.Module):

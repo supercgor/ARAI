@@ -53,11 +53,6 @@ def load(name:str) -> dict[str, Any]:
         "pos_dyn": pos_dyn,
     }
 
-@overload
-def rearrange(ion: list[str], ion_num: list[int], pos: np.ndarray[np.float_], ion_order: str) -> tuple[list[str], list[int], np.ndarray[np.float_]]: ...
-@overload
-def rearrange(ion: list[str], ion_num: list[int], pos: np.ndarray[np.float_], ion_order: str, pos_dyn: np.ndarray[np.float_] | None) -> tuple[list[str], list[int], np.ndarray[np.float_], np.ndarray[np.bool_]]: ...
-
 def rearrange(ion, ion_num, pos, ion_order = ..., pos_dyn = None):
     """
     Rearrage the order of ions.

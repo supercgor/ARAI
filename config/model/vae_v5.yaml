@@ -1,17 +1,15 @@
-net: ConditioalVAE2
+net: ConditioalVAE3
 checkpoint: ~
 params:
-  in_channel: 10
+  in_channel: 4
   model_channel: 16
-  out_channel: 10
+  out_channel: 4
   latent_channel: 8
-  conditonal_channel: 4
   dropout: 0
 
 losses:
   conf_weight: 1.0
   offset_weight: 0.25
-  rot_weight: 0.25
   vae_weight: 1.0
   pos_weight: 5.0
 

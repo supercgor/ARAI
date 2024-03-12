@@ -47,17 +47,19 @@ def model_save(module: nn.Module, path: str):
 def model_load(module: nn.Module, path: str, strict = False) -> list[str]:
     state_dict = module.state_dict()
     param_names = list(state_dict.keys())
-    pretrained_state_dict = torch.load(path, map_location = 'cpu')
+    pretrained_state_dict = torch.load(path, map_location = module.device)
     pretrained_param_names = list(pretrained_state_dict.keys())
-    mismatch_list = []
+    mismatch_list = {"shape mismatch": [], "missing keys": []}
     for i, param in enumerate(pretrained_param_names):
         if i == len(param_names):
             break
-        if param == param_names[i]:
-            state_dict[param] = pretrained_state_dict[param]
+        if param in param_names:
+            if state_dict[param].shape == pretrained_state_dict[param].shape:
+                state_dict[param] = pretrained_state_dict[param]
+            else:
+                mismatch_list["shape mismatch"].append(param)
         else:
-            mismatch_list.append(param)
-            continue
+            mismatch_list["missing keys"].append(param)
     if strict:
         module.load_state_dict(state_dict)
     else:
@@ -66,3 +68,8 @@ def model_load(module: nn.Module, path: str, strict = False) -> list[str]:
         except RuntimeError:
             pass
     return mismatch_list
+
+def zero_module_(module: nn.Module):
+    for param in module.parameters():
+        param.data.zero_()
+    return module

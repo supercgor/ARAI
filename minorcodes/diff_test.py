@@ -4,7 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 import h5py
 from model import unet_water
 from model.diff import GaussianDiffusion
-from utils import library, model_save, model_load, xyz
+from utils import lib, model_save, model_load, xyz
 import tqdm
 import numpy as np
 import math
@@ -48,7 +48,7 @@ class AFMDataset(Dataset):
 
         water = data['pos'][()]
         water = torch.as_tensor(water, dtype=torch.float)
-        water = library.decodeWater(water)
+        water = lib.encodewater(water)
         water[:,:3] /= torch.tensor([25.0, 25.0, 16.0])
         water[:,:3].clamp_max_(1 - 1E-7).clamp_min_(0)
         waterind = torch.floor(water[:,:3] * self._label_size).long()
@@ -128,10 +128,10 @@ def main(cfg):
         for ind in range(10):
             x = last_tranform(diffusion.inverse(net, shape=(25,25,16, 10)))[0] # B, X, Y, Z, C
             
-            _, pos, rot = library.box2orgvec(x, 0.7, 2.0, [25.0, 25.0, 16.0], sort = False, nms = True)
+            _, pos, rot = lib.box2orgvec(x, 0.7, 2.0, [25.0, 25.0, 16.0], sort = False, nms = True)
             rot = rot.reshape(-1, 9)[:,:6]
             pos = np.concatenate([pos, rot], axis = -1) # N, 9
-            pos = library.encodeWater(pos)
+            pos = lib.decodewater(pos)
             xyz.write(f"{work_dir}/{ind}_pred.xyz", np.tile(np.array(["O", "H", "H"]),(pos.shape[0],1)), pos.reshape(-1, 3, 3))
 
 if __name__ == '__main__':

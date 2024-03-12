@@ -3,12 +3,10 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cv2
-import re
 import h5py
 import numpy as np
 import tqdm
 import torch
-from utils import library, xyz, poscar
 
 def collate_fn(batch):
     batch = zip(*batch)

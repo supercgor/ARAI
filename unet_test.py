@@ -90,19 +90,19 @@ class Trainer():
             
             if True:
                 for filename, pred, targs in zip(filenames, preds, targs):
-                    _, pos, rot = utils.library.box2orgvec(pred, utils.library.inverse_sigmoid(0.5), 2.0, self.cfg.dataset.real_size, sort = True, nms = True)
+                    _, pos, rot = utils.lib.box2orgvec(pred, utils.lib.logit(0.5), 2.0, self.cfg.dataset.real_size, sort = True, nms = True)
                     rot = rot.reshape(-1, 9)[:,:6]
                     pos = np.concatenate([pos, rot], axis = -1) # N, 9
-                    pos = utils.library.encodeWater(pos)
+                    pos = utils.lib.decodewater(pos)
                     utils.xyz.write(f"{self.work_dir}/{filename}_pred.xyz", np.tile(np.array(["O", "H", "H"]),(pos.shape[0],1)), pos.reshape(-1, 3, 3))
                     O_pos, H_pos = torch.split_with_sizes(pos, [3, 6], dim = 1)
                     O_pos = O_pos.reshape(-1, 3) / torch.tensor([25.0, 25.0, 3.0])
                     H_pos = H_pos.reshape(-1, 3) / torch.tensor([25.0, 25.0, 3.0])
                     utils.poscar.save(f"{self.work_dir}/{filename}_pred.poscar", [25.0, 25.0, 3.0], ["O", "H"], [len(O_pos), len(H_pos)], torch.cat([O_pos, H_pos], dim = 0), ZXYformat=False)
-                    _, pos, rot = utils.library.box2orgvec(targs, 0.5, 2.0, self.cfg.dataset.real_size, sort = False, nms = False)
+                    _, pos, rot = utils.lib.box2orgvec(targs, 0.5, 2.0, self.cfg.dataset.real_size, sort = False, nms = False)
                     rot = rot.reshape(-1, 9)[:,:6]
                     pos = np.concatenate([pos, rot], axis = -1) # N, 9
-                    pos = utils.library.encodeWater(pos)
+                    pos = utils.lib.decodewater(pos)
                     utils.xyz.write(f"{self.work_dir}/{filename}_targ.xyz", np.tile(np.array(["O", "H", "H"]),(pos.shape[0],1)), pos.reshape(-1, 3, 3))
                     
             if self.rank == 0 and i % log_every == 0:
@@ -124,10 +124,10 @@ class Trainer():
             preds = self.model(inps, None)
             if True:
                 for filename, pred in zip(filenames, preds):
-                    _, pos, rot = utils.library.box2orgvec(pred, utils.library.inverse_sigmoid(0.5), 2.0, self.cfg.dataset.real_size, sort = True, nms = True)
+                    _, pos, rot = utils.lib.box2orgvec(pred, utils.lib.logit(0.5), 2.0, self.cfg.dataset.real_size, sort = True, nms = True)
                     rot = rot.reshape(-1, 9)[:,:6]
                     pos = np.concatenate([pos, rot], axis = -1) # N, 9
-                    pos = utils.library.encodeWater(pos)
+                    pos = utils.lib.decodewater(pos)
                     utils.xyz.write(f"{self.work_dir}/{filename}_pred.xyz", np.tile(np.array(["O", "H", "H"]),(pos.shape[0],1)), pos.reshape(-1, 3, 3))
                     O_pos, H_pos = pos[...,:3], pos[...,3:]
                     O_pos = O_pos.reshape(-1, 3) / [25.0, 25.0, 3.0]

@@ -1,7 +1,12 @@
-train_path: "../data/ice_16A_train.hdf5"
-test_path: "../data/ice_16A_test.hdf5"
+# train_path: ../data/ice_16A_R_hup_train.hdf5
+# test_path: ../data/ice_16A_R_hup_test.hdf5
+# train_path: ../data/ice_16A_R_hup_low_T_train.hdf5
+# test_path: ../data/ice_16A_R_hup_low_T_test.hdf5
+train_path: ../data/surface_basal_train.hdf5
+test_path: ../data/surface_basal_test.hdf5
+
 
 image_size: [4, 25, 25]
-real_size: [25.0, 25.0, 4.0]
+real_size: [25.0, 25.0, 16.0]
 ion_type: ['H2O']
 split: [0.0, 4.0, 8.0, 12.0, 16.0]

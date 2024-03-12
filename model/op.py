@@ -1,6 +1,7 @@
 import math
 from abc import abstractmethod
 from functools import partial
+from copy import deepcopy
 import numpy as np
 
 import torch
@@ -20,18 +21,17 @@ class GroupNorm32(nn.GroupNorm):
         return super().forward(x.float()).type(x.dtype)
 
 
-def conv_nd(dims, *args, **kwargs):
+def conv_nd(dims, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, padding_mode="zeros", *args, **kwargs):
     """
     Create a 1D, 2D, or 3D convolution module.
     """
     if dims == 1:
-        return nn.Conv1d(*args, **kwargs)
+        return nn.Conv1d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias, padding_mode, *args, **kwargs)
     elif dims == 2:
-        return nn.Conv2d(*args, **kwargs)
+        return nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias, padding_mode, *args, **kwargs)
     elif dims == 3:
-        return nn.Conv3d(*args, **kwargs)
+        return nn.Conv3d(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias, padding_mode, *args, **kwargs)
     raise ValueError(f"unsupported dimensions: {dims}")
-
 
 def linear(*args, **kwargs):
     """
@@ -40,16 +40,29 @@ def linear(*args, **kwargs):
     return nn.Linear(*args, **kwargs)
 
 
-def avg_pool_nd(dims, *args, **kwargs):
+def max_pool_nd(dims, kernel_size, stride=None, padding=0, dilation=1, return_indices=False, ceil_mode=False, *args, **kwargs):
+    """
+    Create a 1D, 2D, or 3D max pooling module.
+    """
+    if dims == 1:
+        return nn.MaxPool1d(kernel_size, stride, padding, dilation, return_indices, ceil_mode, *args, **kwargs)
+    elif dims == 2:
+        return nn.MaxPool2d(kernel_size, stride, padding, dilation, return_indices, ceil_mode, *args, **kwargs)
+    elif dims == 3:
+        return nn.MaxPool3d(kernel_size, stride, padding, dilation, return_indices, ceil_mode, *args, **kwargs)
+    raise ValueError(f"unsupported dimensions: {dims}")
+
+
+def avg_pool_nd(dims, kernel_size, stride=None, padding=0, ceil_mode=False, count_include_pad=True, *args, **kwargs):
     """
     Create a 1D, 2D, or 3D average pooling module.
     """
     if dims == 1:
-        return nn.AvgPool1d(*args, **kwargs)
+        return nn.AvgPool1d(kernel_size, stride, padding, ceil_mode, count_include_pad, *args, **kwargs)
     elif dims == 2:
-        return nn.AvgPool2d(*args, **kwargs)
+        return nn.AvgPool2d(kernel_size, stride, padding, ceil_mode, count_include_pad, *args, **kwargs)
     elif dims == 3:
-        return nn.AvgPool3d(*args, **kwargs)
+        return nn.AvgPool3d(kernel_size, stride, padding, ceil_mode, count_include_pad, *args, **kwargs)
     raise ValueError(f"unsupported dimensions: {dims}")
 
 def max_adt_pool_nd(dims, *args, **kwargs):
@@ -144,6 +157,22 @@ def timestep_embedding(timesteps, dim, max_period=10000):
         embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
     return embedding
 
+class GatedConvNd(nn.Module):
+    def __init__(self, dims, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True, padding_mode="zeros", num_head = 8, *args, **kwargs):
+        super().__init__()
+        out_channels = out_channels or in_channels
+        self.num_head = num_head
+        self.conv = conv_nd(dims, in_channels, num_head + out_channels, kernel_size, stride, padding, dilation, groups, bias, padding_mode, *args, **kwargs)
+    
+    def forward(self, x):
+        x = self.conv(x)
+        mask = torch.sigmoid(x[:, :self.num_head]) # B, H, ...
+        x = x[:, self.num_head:] # B, C, ...
+        x = x.view(x.shape[0], self.num_head, -1, *x.shape[2:]) # B, H, C/H, ...
+        x = x * mask[:, :, None]
+        x = x.view(x.shape[0], -1, *x.shape[3:]) # B, C, ...
+        return x
+
 class AttentionPool2d(nn.Module):
     """
     Adapted from CLIP: https://github.com/openai/CLIP/blob/main/clip/model.py
@@ -232,6 +261,8 @@ class Upsample(nn.Module):
         self.use_conv = use_conv
         self.dims = dims
         self.z_down = z_down
+        if isinstance(out_size, np.ndarray):
+            out_size = out_size.tolist()
         self.out_size = out_size
         
         if use_conv:
@@ -313,7 +344,49 @@ class MixBlock(ReferenceBlock):
         x = self.mix(x, ref)
         x = self.op(x)
         return x
+
+class GatedResBlock(TimestepBlock):
+    def __init__(self, channels, dropout, emb_channels = None, out_channels: None | int = None, dims = 3, pos_emb = False):
+        super().__init__()
+        self.channels = channels
+        self.emb_channels = emb_channels
+        self.out_channels = out_channels or channels
+        self.dropout = dropout
         
+        # self.pos_emb = pos_emb
+        # self.posemb = PositionalEncoding(channels, flatten=False)
+        # self._cache_emb = None
+
+        self.in_layers = nn.Sequential()
+        self.in_layers.add_module("norm", normalization(channels))
+        self.in_layers.add_module("act", nn.SiLU(True))
+        self.in_layers.add_module("conv", GatedConvNd(dims, channels, out_channels, 3, padding=1))
+
+        self.out_layers = nn.Sequential()
+        self.out_layers.add_module("norm", normalization(channels))
+        self.out_layers.add_module("act", nn.SiLU(True))
+        self.out_layers.add_module("conv", GatedConvNd(dims, out_channels, out_channels, 3, padding=1))
+        self.out_layers.add_module("drop", nn.Dropout(p=dropout))
+        
+        if self.emb_channels is not None:
+            self.emb_layers = nn.Sequential(
+                nn.SiLU(),
+                conv_nd(dims, emb_channels, self.out_channels, 1),
+            )
+        
+        if self.out_channels == channels:
+            self.skip_connection = nn.Identity()
+        else:
+            self.skip_connection = GatedConvNd(dims, channels, out_channels, 1)
+
+    def forward(self, x, emb = None):
+        h = self.in_layers(x)
+        if emb is not None:
+            emb = self.emb_layers(emb)
+            h = h + emb
+        h = self.out_layers(h)
+        return self.skip_connection(x) + h
+
 class ResBlock(TimestepBlock):
     """
     A residual block that can optionally change the number of channels.
@@ -331,7 +404,20 @@ class ResBlock(TimestepBlock):
     :param down: if True, use this block for downsampling.
     """
 
-    def __init__(self, channels, emb_channels, dropout, out_channels=None, use_conv=False, use_scale_shift_norm=False, dims=2, use_checkpoint=False, up=False, down=False, z_down = False, padding_mode="reflect"):
+    def __init__(self, 
+                 channels, 
+                 emb_channels, 
+                 dropout, 
+                 out_channels=None, 
+                 use_conv=False, 
+                 use_scale_shift_norm=False, 
+                 dims=2, 
+                 use_checkpoint=False, 
+                 up=False, 
+                 down=False, 
+                 z_down = False, 
+                 padding_mode="reflect",
+                 ):
         super().__init__()
         self.channels = channels
         self.emb_channels = emb_channels
@@ -636,7 +722,7 @@ class PositionalEncoding(nn.Module):
     def __init__(self, channels: int | None = None, 
                  temperture: int = 10000, 
                  flatten: bool = True, 
-                 scale: float = 2* math.pi):
+                 scale: float = 2* math.pi,):
         super().__init__()
         self.channels = channels
         self.temperture = temperture
@@ -656,4 +742,3 @@ class PositionalEncoding(nn.Module):
             self._cache = positional_encoding(x, self.channels, self.temperture, self.flatten, self.scale).to(device)
             self._cache_shape = self._cache.shape[1:-1]
             return self._cache
-    

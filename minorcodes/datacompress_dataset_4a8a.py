@@ -7,7 +7,7 @@ import h5py
 import numpy as np
 import tqdm
 import torch
-from utils import library, xyz
+from utils import lib, xyz
 
 def collate_fn(batch):
     batch = zip(*batch)

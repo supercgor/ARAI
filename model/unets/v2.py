@@ -1,7 +1,7 @@
 import torch
 from torch import nn, Tensor
 
-from .op import *
+from ..op import *
 
 # ============================================================================
 # UNet: Edited and adapted from github repo: https://github.com/AlexGraikos/diffusion_priors    

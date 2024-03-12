@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 import tqdm
 import torch
-from utils import library, xyz, poscar
+from utils import lib, xyz, poscar
 
 def collate_fn(batch):
     batch = zip(*batch)
@@ -29,7 +29,7 @@ class DataReader(torch.utils.data.Dataset):
         dis = card['pos'] * real
         split_ = card['ion_num']
         O, H = np.split(dis, np.cumsum(split_)[:-1], axis=0)
-        water = library.group_as_water(torch.from_numpy(O), torch.from_numpy(H))
+        water = lib.group_as_water(torch.from_numpy(O), torch.from_numpy(H))
         water = water.numpy()
         water[...,(2,5,8)] *= -1
         water[...,(2,5,8)] += 4
